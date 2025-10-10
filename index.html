@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>متابعة حضور إجتماعات و قداسات مدارس الأحد</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* خط "Inter" هو خط أساسي، لكن يتم استخدام خط افتراضي عربي مناسب */
+        body { font-family: Tahoma, sans-serif; background-color: #f0f4f8; }
+        .card { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+        /* تصميم زر التأكيد ليناسب أجهزة الموبايل */
+        .primary-btn {
+            padding: 1rem;
+            font-size: 1.125rem;
+            transition: all 0.2s;
+        }
+        .primary-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        /* تخصيص لون الإخلاص (البنفسجي) */
+        .bg-custom-purple { background-color: #6B46C1; }
+        .text-custom-purple { color: #6B46C1; }
+        .border-custom-purple { border-color: #6B46C1; }
+        /* تصميم زر تسجيل الخروج */
+        .logout-btn { background-color: #EF4444; }
+        .logout-btn:hover { background-color: #DC2626; }
+        /* لتصميم زر الدخول الكبير في الصفحة الرئيسية */
+        .large-home-btn { 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 150px;
+            width: 100%;
+            border: 2px solid;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-6 min-h-screen flex items-start justify-center">
+
+    <div id="app" class="w-full max-w-4xl">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-800 mb-2">👋🏼 متابعة الحضور</h1>
+            <p class="text-gray-600">لتسجيل قداسات واجتماعات مدارس الأحد</p>
+            <div id="auth-status-display" class="mt-2 text-sm">
+                <span id="user-id-display" class="text-gray-400"></span>
+                <button id="logout-button" onclick="handleLogout()" class="hidden px-3 py-1 text-xs text-white logout-btn rounded-full mr-2">تسجيل خروج</button>
+            </div>
+        </div>
+        
+        <!-- Loading Indicator -->
+        <div id="loading" class="hidden text-center p-8 bg-white rounded-xl card transition duration-300">
+            <div class="animate-spin inline-block w-8 h-8 border-4 border-t-4 border-custom-purple border-t-transparent rounded-full mb-3"></div>
+            <p class="text-lg font-semibold text-gray-700">جارِ تحميل البيانات...</p>
+        </div>
+
+        <!-- Main Content Area -->
+        <div id="content" class="space-y-6">
+            <!-- Navigation Buttons (Hidden by default, shown when logged in or on public view) -->
+            <div id="nav-buttons" class="hidden justify-center space-x-4 space-x-reverse mb-6">
+                <!-- Buttons will be rendered dynamically based on user role (Admin or Child) -->
+            </div>
+
+            <!-- Views will be injected here -->
+            <div id="view-content" class="space-y-6">
+                <!-- View content (Home, Register, Admin, Profile, etc.) goes here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals (Custom Alerts/Prompts) -->
+    <div id="modal-backdrop" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-xl w-11/12 max-w-sm card">
+            <h3 id="modal-title" class="text-xl font-bold mb-4 text-custom-purple"></h3>
+            <p id="modal-message" class="mb-6 text-gray-700"></p>
+            <div id="modal-body"></div>
+            <button onclick="hideModal()" class="w-full primary-btn bg-custom-purple text-white rounded-lg">تم</button>
+        </div>
+    </div>
+    
+    <!-- QR Code Library -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase variables
+        let app, db, auth, userId;
+        let currentPage = 'home'; // Start on the new home page
+        let currentChildId = null; 
+        let isFirebaseActive = false;
+        let isAdmin = false; // Flag to track admin status (logged in via Email/Password)
+        let authStateHandled = false; // NEW: Flag to track if onAuthStateChanged has run
+
+        // --- Firebase Setup Handling ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        let firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+
+        // --- START: CUSTOM CONFIGURATION FOR GITHUB DEPLOYMENT ---
+        const GITHUB_FIREBASE_CONFIG = {
+             apiKey: "AIzaSy0ByGubyWvdaIVJETOQF6EMJHWF7mcg", 
+             authDomain: "sundayschoolattendance-84656.firebaseapp.com", 
+             projectId: "sundayschoolattendance-84656", 
+             storageBucket: "sundayschoolattendance-84656.appspot.com",
+             messagingSenderId: "444562341363",
+             appId: "1:444562341363:web:10ff6f84df01ae599a686"
+        };
+        
+        // إذا لم يتم توفير إعدادات Canvas (أي عند التشغيل خارج Canvas)، استخدم إعدادات GitHub
+        if (!firebaseConfig) {
+             firebaseConfig = GITHUB_FIREBASE_CONFIG;
+        }
+        
+        // Check if real config is provided and is NOT the placeholder 'YOUR_API_KEY'
+        if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+            isFirebaseActive = true;
+        }
+        // --- END: CUSTOM CONFIGURATION FOR GITHUB DEPLOYMENT ---
+
+        // Set log level for debugging Firestore (optional but helpful)
+        setLogLevel('debug');
+
+
+        // --- Auth and Initialization ---
+
+        /**
+         * Initializes Firebase, signs in the user, and sets up global services.
+         * Note: The function is now simplified and wrapped in an IIFE below to force earlier execution.
+         */
+        async function initializeAppAndAuth() {
+            
+            if (!isFirebaseActive) {
+                // Mock Initialization logic remains the same for UI testing
+                console.warn("Firebase configuration not found. Running in UI simulation mode.");
+                document.getElementById('loading').innerHTML = `<p class="text-red-600 font-bold">⚠️ وضع المحاكاة: لا يوجد اتصال بقاعدة البيانات.</p>`;
+                
+                setTimeout(() => {
+                    document.getElementById('loading').classList.add('hidden');
+                    navigate(currentPage);
+                }, 500);
+                return;
+            }
+
+            // --- Real Firebase Initialization ---
+            try {
+                // 1. Initialize App and Services
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // 2. Setup Auth State Listener (This runs once when the auth state is determined)
+                const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                    // Check if we already handled the initial state (to prevent double navigation)
+                    if (authStateHandled) {
+                        // If it's a subsequent login/logout, we still update the UI but don't re-navigate unless explicitly asked
+                        // But we ensure the user is an admin if they signed in with email/password
+                        if (user) {
+                             const providerId = user.providerData[0]?.providerId;
+                             isAdmin = (providerId === 'password');
+                             document.getElementById('user-id-display').innerText = isAdmin ? `أدمن: ${user.email}` : `مستخدم عام`;
+                             document.getElementById('logout-button').classList.toggle('hidden', !isAdmin);
+                             document.getElementById('nav-buttons').classList.remove('hidden');
+                        }
+                        return;
+                    }
+                    
+                    // --- Initial State Handling ---
+                    authStateHandled = true;
+                    unsubscribe(); // Stop listening after the initial state is determined
+
+                    if (user) {
+                        userId = user.uid;
+                        const providerId = user.providerData[0]?.providerId;
+                        isAdmin = (providerId === 'password');
+
+                        // If not signed in with email/password, try to sign in anonymously for public access
+                        if (!isAdmin && !user.isAnonymous) {
+                           await signInAnonymously(auth); 
+                        }
+                        
+                        document.getElementById('user-id-display').innerText = isAdmin ? `أدمن: ${user.email}` : `مستخدم عام`;
+                        document.getElementById('logout-button').classList.toggle('hidden', !isAdmin);
+                        document.getElementById('nav-buttons').classList.remove('hidden');
+
+                    } else {
+                        // If no user exists initially, force anonymous sign-in now
+                        try {
+                           const anonUserCredential = await signInAnonymously(auth);
+                           userId = anonUserCredential.user.uid;
+                           document.getElementById('user-id-display').innerText = `مستخدم عام`;
+                        } catch (anonError) {
+                            console.error("Forced Anonymous Sign-in failed:", anonError);
+                             document.getElementById('user-id-display').innerText = 'فشل تسجيل الدخول العام.';
+                        }
+                        
+                        document.getElementById('logout-button').classList.add('hidden');
+                        document.getElementById('nav-buttons').classList.add('hidden');
+                    }
+                    
+                    document.getElementById('loading').classList.add('hidden');
+                    
+                    // Check URL for child ID (QR Scan) and navigate
+                    const params = new URLSearchParams(window.location.search);
+                    const idFromUrl = params.get('id');
+                    
+                    if (idFromUrl) {
+                        currentChildId = idFromUrl;
+                        navigate('profile'); 
+                    } else {
+                        navigate(currentPage);
+                    }
+                });
+
+                // 3. Fallback check for initial load (in case onAuthStateChanged is too slow)
+                setTimeout(async () => {
+                    if (!authStateHandled) {
+                        console.warn("Auth state handler timeout reached. Forcing anonymous sign-in and navigation.");
+                        
+                        try {
+                            // Attempt to sign in anonymously and proceed if not handled yet
+                            const anonUserCredential = await signInAnonymously(auth);
+                            userId = anonUserCredential.user.uid;
+                        } catch (error) {
+                             console.error("Timeout: Anonymous Sign-in failed:", error);
+                        }
+                        
+                        // Force navigation now
+                        if (!authStateHandled) {
+                            document.getElementById('loading').classList.add('hidden');
+                            navigate(currentPage);
+                        }
+                    }
+                }, 2000); // 2 seconds timeout
+
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                 // Display specific error message for critical errors
+                document.getElementById('loading').innerHTML = `
+                    <p class="text-red-600 font-bold">خطأ في التهيئة: ${error.message}</p>
+                    <p class="text-sm text-red-500 mt-2">
+                       الرجاء التأكد من تفعيل **Email/Password** و **Anonymous** في Firebase > Authentication.
+                    </p>
+                `;
+            }
+        }
+        
+        /**
+         * Handles admin registration (creating a new Khadem account).
+         */
+        window.handleAdminRegister = async function() {
+            const email = document.getElementById('register-email').value.trim();
+            const password = document.getElementById('register-password').value.trim();
+            const name = document.getElementById('register-name').value.trim();
+
+            if (!email || !password || !name) return showModal('خطأ', 'الرجاء ملء جميع الحقول.');
+
+            if (password.length < 6) return showModal('خطأ', 'يجب أن تكون كلمة المرور 6 أحرف على الأقل.');
+
+            try {
+                // 1. Create the user in Firebase Auth
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                // 2. Save Khadem details in Firestore (optional but recommended for name tracking)
+                await setDoc(doc(db, 'khodam', user.uid), {
+                    email: email,
+                    name: name,
+                    createdAt: new Date().toISOString()
+                });
+
+                // 3. Log out and go back to home page (Auth listener will handle sign in)
+                await signOut(auth); // Sign out the current anonymous user
+                navigate('home');
+                showModal('نجاح التسجيل', 'تم إنشاء حساب الخادم بنجاح. يمكنك الآن تسجيل الدخول.');
+
+            } catch(error) {
+                console.error("Admin Registration Error:", error);
+                if (error.code === 'auth/email-already-in-use') {
+                    showModal('خطأ', 'هذا الإيميل مستخدم بالفعل.');
+                } else if (error.code === 'auth/invalid-email') {
+                    showModal('خطأ', 'صيغة الإيميل غير صحيحة.');
+                } else {
+                    showModal('خطأ', 'حدث خطأ أثناء تسجيل الخادم. الرجاء المحاولة مرة أخرى.');
+                }
+            }
+        }
+
+        /**
+         * Handles admin login (Khadem login).
+         */
+        window.handleAdminLogin = async function() {
+            // *** تم تعديل الدالة لإزالة المسافات الزائدة من الإيميل والباسورد ***
+            const email = document.getElementById('login-email').value.trim();
+            const password = document.getElementById('login-password').value.trim(); // NEW: Trim password too
+
+            if (!email || !password) return showModal('خطأ', 'الرجاء إدخال الإيميل وكلمة المرور.');
+
+            try {
+                // 1. Sign in with Email and Password
+                await signInWithEmailAndPassword(auth, email, password);
+                
+                // Auth listener will handle setting isAdmin flag and navigation
+                showModal('نجاح تسجيل الدخول', 'أهلاً بك! تم تسجيل دخولك كـ "خادم" بنجاح.');
+
+            } catch(error) {
+                console.error("Admin Login Error:", error);
+                if (error.code === 'auth/wrong-password' || error.code === 'auth/user-not-found') {
+                    // This is the error code for wrong credentials
+                    showModal('خطأ في الدخول', 'الإيميل أو كلمة المرور غير صحيحة.');
+                } else if (error.code === 'auth/invalid-email') {
+                    showModal('خطأ', 'صيغة الإيميل غير صحيحة.');
+                } else {
+                    // General error, likely due to a temporary Live Server issue or a strange credential format
+                    showModal('خطأ', 'حدث خطأ عام أثناء تسجيل الدخول. الرجاء مراجعة بيانات الاعتماد والمحاولة مرة أخرى.');
+                }
+            }
+        }
+        
+        /**
+         * Handles admin logout.
+         */
+        window.handleLogout = async function() {
+            await signOut(auth); // Signs out Email/Password user, which triggers Anonymous sign-in
+            isAdmin = false;
+            navigate('home');
+            showModal('تسجيل الخروج', 'تم تسجيل خروجك بنجاح. يمكنك الآن الدخول كـ "خادم" أو الاستمرار كـ "مخدوم".');
+        }
+
+
+        // --- Utility Functions ---
+        // ... (omitted utility functions for brevity) ...
+
+        /**
+         * @returns {string} The collection path for public children data.
+         */
+        function getChildrenCollectionPath() {
+             if (isFirebaseActive && typeof __firebase_config === 'undefined') {
+                return `children`;
+            }
+            return `artifacts/${appId}/public/data/children`;
+        }
+        
+        // ... (omitted remaining functions for brevity) ...
+        
+        function getAttendanceCollectionPath(childId) {
+            return `${getChildrenCollectionPath()}/${childId}/attendance`;
+        }
+
+        function formatDateToDocId(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        window.showModal = function(title, message, bodyHtml = '') {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-message').innerText = message;
+            document.getElementById('modal-body').innerHTML = bodyHtml;
+            document.getElementById('modal-backdrop').classList.remove('hidden');
+        }
+
+        window.hideModal = function() {
+            document.getElementById('modal-backdrop').classList.add('hidden');
+        }
+
+        // --- Navigation and Rendering ---
+
+        window.navigate = function(page, childId = null) {
+            currentPage = page;
+            currentChildId = childId;
+            const content = document.getElementById('view-content'); 
+            const navButtons = document.getElementById('nav-buttons');
+            
+            content.innerHTML = ''; // Clear previous content
+
+            // 1. Decide which navigation buttons to show
+            if (page === 'home' || page === 'admin_register' || page === 'admin_login') {
+                 navButtons.classList.add('hidden');
+            } else if (isAdmin) {
+                navButtons.innerHTML = `
+                    <button onclick="navigate('admin_scan')" id="nav-admin" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150">مسح QR</button>
+                    <button onclick="navigate('register')" id="nav-register" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150">تسجيل مخدوم جديد</button>
+                `;
+                navButtons.classList.remove('hidden');
+            } else { // Public access (Makhdoum/Child)
+                navButtons.innerHTML = `
+                    <button onclick="navigate('register')" id="nav-register" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150">تسجيل جديد</button>
+                    <button onclick="navigate('history_search')" id="nav-history" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150">عرض سجل الحضور</button>
+                `;
+                 navButtons.classList.remove('hidden');
+            }
+
+
+            // 2. Clear and set active styling
+            // Reset styling for the new buttons set
+            const allNavButtons = navButtons.querySelectorAll('button');
+            allNavButtons.forEach(btn => {
+                btn.classList.remove('bg-custom-purple', 'text-white');
+                btn.classList.add('bg-gray-200', 'text-gray-700');
+            });
+            
+            let activeNavId = '';
+            
+            // 3. Render the view
+            switch (page) {
+                case 'home':
+                    renderHomeView(content);
+                    break;
+                case 'admin_register':
+                    renderAdminRegisterView(content);
+                    break;
+                case 'admin_login':
+                    renderAdminLoginView(content);
+                    break;
+                case 'register':
+                    renderRegisterView(content);
+                    activeNavId = 'nav-register';
+                    break;
+                case 'admin_scan':
+                    renderAdminScanView(content);
+                    activeNavId = 'nav-admin';
+                    break;
+                case 'profile':
+                    // Profile view is only accessible if logged in as admin
+                    if (isAdmin) {
+                        renderProfileView(content, currentChildId);
+                        activeNavId = 'nav-admin'; // Highlight scan button if viewing profile
+                    } else {
+                        // If a child scans their QR but is not logged in as admin, they see their history
+                        navigate('child_history', currentChildId); 
+                    }
+                    break;
+                case 'history_search':
+                    renderHistorySearchView(content);
+                    activeNavId = 'nav-history';
+                    break;
+                case 'child_history':
+                    renderChildHistoryView(content, currentChildId);
+                    activeNavId = 'nav-history'; // Highlight history button if viewing history
+                    break;
+            }
+
+            // 4. Apply active state styling
+            const activeBtn = document.getElementById(activeNavId);
+            if (activeBtn) {
+                activeBtn.classList.add('bg-custom-purple', 'text-white');
+                activeBtn.classList.remove('bg-gray-200', 'text-gray-700');
+            }
+        }
+        
+        /**
+         * Renders the new home view with Khadem/Makhdoum choice.
+         */
+        function renderHomeView(container) {
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                    <h2 class="text-3xl font-bold mb-8 text-custom-purple text-center">أهلاً بك في خدمة المتابعة</h2>
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <!-- Khadem Button -->
+                        <button onclick="navigate('admin_login')" class="large-home-btn border-custom-purple hover:bg-custom-purple hover:text-white transition duration-200 rounded-xl">
+                            <span class="text-4xl mb-2">🧑‍💻</span>
+                            <span class="text-xl font-bold">هل أنت خادم؟</span>
+                            <span class="text-sm mt-1">(لتسجيل الحضور والمتابعة)</span>
+                        </button>
+                        
+                        <!-- Makhdoum Button -->
+                        <button onclick="navigate('register')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
+                            <span class="text-4xl mb-2">👦👧</span>
+                            <span class="text-xl font-bold">هل أنت مخدوم؟</span>
+                            <span class="text-sm mt-1">(للتسجيل وعرض السجل)</span>
+                        </button>
+                    </div>
+
+                    <div class="mt-8 text-center">
+                         <p class="text-gray-600 mb-2">لو لم يكن لديك حساب خادم، يمكنك إنشائه من هنا:</p>
+                         <button onclick="navigate('admin_register')" class="text-sm text-custom-purple hover:underline">إنشاء حساب خادم جديد</button>
+                    </div>
+
+                </div>
+            `;
+        }
+
+        /**
+         * Renders the Khadem Registration Form (Admin Register).
+         */
+        function renderAdminRegisterView(container) {
+             container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">إنشاء حساب خادم جديد</h2>
+                    <form onsubmit="event.preventDefault(); handleAdminRegister()" class="space-y-4">
+                        <div>
+                            <label for="register-name" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
+                            <input type="text" id="register-name" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                        </div>
+                        <div>
+                            <label for="register-email" class="block text-sm font-medium text-gray-700 mb-1">الإيميل (سيصبح اسم المستخدم):</label>
+                            <input type="email" id="register-email" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                        </div>
+                        <div>
+                            <label for="register-password" class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور (6 أحرف حد أدنى):</label>
+                            <input type="password" id="register-password" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                        </div>
+                        <button type="submit" class="w-full primary-btn bg-custom-purple text-white rounded-lg hover:bg-purple-700">تسجيل كخادم</button>
+                    </form>
+                    <button onclick="navigate('admin_login')" class="mt-4 w-full text-sm text-gray-600 hover:underline">لديك حساب بالفعل؟ تسجيل دخول</button>
+                </div>
+            `;
+        }
+
+
+        /**
+         * Renders the Admin Login Form (Khadem Login).
+         */
+        function renderAdminLoginView(container) {
+             container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 text-red-500 border-b pb-2">🔒 تسجيل دخول الخادم</h2>
+                    <p class="mb-4 text-gray-700">استخدم الإيميل وكلمة المرور الخاصة بك.</p>
+                    <form onsubmit="event.preventDefault(); handleAdminLogin()" class="space-y-4">
+                        <div>
+                            <label for="login-email" class="block text-sm font-medium text-gray-700 mb-1">الإيميل:</label>
+                            <input type="email" id="login-email" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" placeholder="الإيميل">
+                        </div>
+                        <div>
+                            <label for="login-password" class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور:</label>
+                            <input type="password" id="login-password" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" placeholder="كلمة المرور">
+                        </div>
+                        <button type="submit" class="w-full primary-btn bg-red-500 text-white rounded-lg hover:bg-red-600">تسجيل الدخول</button>
+                    </form>
+                    <button onclick="navigate('admin_register')" class="mt-4 w-full text-sm text-gray-600 hover:underline">ليس لديك حساب؟ إنشاء حساب جديد</button>
+                    <button onclick="navigate('home')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
+                </div>
+            `;
+        }
+
+
+        /**
+         * Renders the registration form.
+         */
+        function renderRegisterView(container) {
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">استمارة تسجيل الحضور</h2>
+                    <form id="registration-form" class="space-y-4">
+                        <div>
+                            <label for="name" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
+                            <input type="text" id="name" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                        </div>
+                        <div>
+                            <label for="grade" class="block text-sm font-medium text-gray-700 mb-1">الصف/الخدمة:</label>
+                            <input type="text" id="grade" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                        </div>
+                        <div>
+                            <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف (للتواصل):</label>
+                            <input type="tel" id="phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                        </div>
+                        <button type="submit" class="w-full primary-btn bg-custom-purple text-white rounded-lg hover:bg-purple-700">تسجيل وحفظ</button>
+                    </form>
+                    
+                    <div id="registration-result" class="mt-6 p-4 border-l-4 border-green-500 bg-green-50 rounded-lg hidden">
+                        <p class="font-bold text-green-700 mb-2">تم التسجيل بنجاح! 🎉</p>
+                        <p class="text-gray-700 mb-4">هذا هو الكود الخاص بك (الـ QR Code):</p>
+                        <div id="qr-code-area" class="text-center p-4 border-4 border-gray-200 rounded-lg">
+                            <!-- QR Code will be generated here -->
+                        </div>
+                        <p class="mt-4 text-sm text-center text-gray-500">احفظ هذا الـ QR Code لكي يتم مسحه لتسجيل حضورك.</p>
+                    </div>
+                </div>
+            `;
+            document.getElementById('registration-form').onsubmit = handleRegistration;
+        }
+
+
+        /**
+         * Handles registration form submission and saves data to Firestore.
+         */
+        async function handleRegistration(e) {
+            e.preventDefault();
+            const name = document.getElementById('name').value.trim();
+            const grade = document.getElementById('grade').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+
+            const formButton = e.target.querySelector('button[type="submit"]');
+            formButton.disabled = true;
+            formButton.innerText = 'جاري الحفظ...';
+            
+            let childId;
+
+            if (!isFirebaseActive) {
+                childId = 'MOCK-ID-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+
+                showModal('⚠️ وضع المحاكاة', 'لا يمكن حفظ البيانات! يجب تشغيل التطبيق في بيئة Canvas أو إعداد Firebase يدوياً.', `
+                    <p class="text-xs text-red-500 mb-3">
+                        سيتم عرض الـ ID ولكن لن يتم حفظه في قاعدة البيانات.
+                    </p>
+                `);
+            } else {
+                try {
+                    // Add a new document (child) to the 'children' collection
+                    const docRef = await addDoc(collection(db, getChildrenCollectionPath()), {
+                        name,
+                        grade,
+                        phone,
+                        createdAt: new Date().toISOString(),
+                    });
+                    childId = docRef.id;
+                    showModal('نجاح التسجيل', 'تم تسجيل بياناتك بنجاح! احفظ الكود الظاهر لتسجيل الحضور.');
+
+                } catch (error) {
+                    console.error("Error saving child data: ", error);
+                    showModal('خطأ في الحفظ', 'حدث خطأ أثناء حفظ البيانات. الرجاء المحاولة مرة أخرى.');
+                    formButton.disabled = false;
+                    formButton.innerText = 'تسجيل وحفظ';
+                    return;
+                }
+            }
+
+            // Construct the link for the QR code (simulating the scan)
+            const qrLink = `${window.location.origin}${window.location.pathname}?id=${childId}`;
+
+            // Reset QR area and display ID
+            const qrCodeArea = document.getElementById('qr-code-area');
+            qrCodeArea.innerHTML = `
+                <div id="qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
+                <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
+            `;
+            
+            // Generate QR Code locally using qrcode.js
+            new QRCode(document.getElementById("qrcode-canvas"), {
+                text: qrLink,
+                width: 200,
+                height: 200,
+                colorDark : "#6B46C1",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.H
+            });
+
+
+            document.getElementById('registration-form').classList.add('hidden');
+            document.getElementById('registration-result').classList.remove('hidden');
+            
+            formButton.disabled = false;
+            formButton.innerText = 'تسجيل وحفظ';
+        }
+
+
+        /**
+         * Renders the admin (QR scanning simulator) view.
+         */
+        function renderAdminScanView(container) {
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">صفحة الإدارة (مسح QR)</h2>
+                    <p class="mb-4 text-gray-700">هذه الصفحة تمكنك من مسح كود الولد لتسجيل حضوره.</p>
+                    <form id="admin-scan-form" class="space-y-4">
+                        <div>
+                            <label for="child-id-input" class="block text-sm font-medium text-gray-700 mb-1">كود الولد (Child ID):</label>
+                            <input type="text" id="child-id-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="الصقهنا أو أدخله يدوياً">
+                        </div>
+                        <button type="submit" class="w-full primary-btn bg-blue-500 text-white rounded-lg hover:bg-blue-600">فتح ملف المتابعة</button>
+                    </form>
+                </div>
+            `;
+            document.getElementById('admin-scan-form').onsubmit = handleAdminScan;
+        }
+
+        // ... (omitted remaining functions for brevity) ...
+        
+        /**
+         * Handles manual ID input (simulating QR scan).
+         */
+        async function handleAdminScan(e) {
+            e.preventDefault();
+            const id = document.getElementById('child-id-input').value.trim();
+            
+            if (!isFirebaseActive) {
+                showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
+                    <p class="text-xs text-red-500 mb-3">
+                        للتجربة: يمكنك استخدام أي كود، ولكن لن يتم عرض ملف الولد.
+                    </p>
+                `);
+                 return;
+            }
+
+            if (id) {
+                 // Check if the ID is valid before navigating
+                const docRef = doc(db, getChildrenCollectionPath(), id);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                     // Navigate to profile view and update URL (simulating a real QR scan link)
+                    const newUrl = `${window.location.origin}${window.location.pathname}?id=${id}`;
+                    window.history.pushState({ id: id }, `Profile for ${id}`, newUrl);
+                    navigate('profile', id);
+                } else {
+                    showModal('كود غير صحيح', 'لم يتم العثور على ولد بهذا الكود (ID). تأكد من الكود المدخل.');
+                }
+            }
+        }
+
+
+        /**
+         * Renders the child's profile view for admin attendance tracking.
+         */
+        function renderProfileView(container, childId) {
+            if (!childId) {
+                container.innerHTML = '<p class="text-red-600 text-center mt-8">خطأ: لم يتم تحديد كود الولد للمتابعة.</p>';
+                return;
+            }
+            
+            if (!isFirebaseActive) {
+                 container.innerHTML = `
+                    <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
+                        <h2 class="text-2xl font-bold mb-4 text-red-500">⚠️ وضع المحاكاة</h2>
+                        <p class="text-gray-700 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض ملف المتابعة أو تسجيل الحضور.</p>
+                        <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لاستخدام وظيفة المتابعة.</p>
+                        <button onclick="navigate('admin_scan')" class="mt-6 primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">العودة لصفحة الإدارة</button>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                    <h2 class="text-2xl font-bold mb-4 text-custom-purple">ملف متابعة: <span id="child-name-display" class="text-gray-800">جاري التحميل...</span></h2>
+                    <p class="text-gray-500 mb-6">الصف/الخدمة: <span id="child-grade-display" class="font-semibold">...</span></p>
+
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2">تسجيل حضور اليوم: ${formatDateToDocId(new Date())}</h3>
+                    <div id="attendance-status" class="mb-6 p-4 rounded-lg bg-gray-100 flex justify-around text-center">
+                        <div>
+                            <p class="font-medium text-gray-700">القداس:</p>
+                            <p id="mass-status" class="text-lg font-bold ${isAdmin ? 'text-red-500' : 'text-gray-500'}">غير مسجل</p>
+                        </div>
+                        <div>
+                            <p class="font-medium text-gray-700">الإجتماع:</p>
+                            <p id="meeting-status" class="text-lg font-bold ${isAdmin ? 'text-red-500' : 'text-gray-500'}">غير مسجل</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-4 mb-8">
+                        ${isAdmin ? `
+                           <button onclick="recordAttendance('${childId}', 'mass')" class="flex-1 primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">✅ تسجيل حضور القداس</button>
+                           <button onclick="recordAttendance('${childId}', 'meeting')" class="flex-1 primary-btn bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">✅ تسجيل حضور الإجتماع</button>
+                        ` : `
+                           <p class="text-center w-full text-gray-600 font-semibold p-3 border border-gray-300 rounded-lg">الرجاء تسجيل الدخول كخادم لتسجيل الحضور.</p>
+                        `}
+                    </div>
+
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2">سجل الحضور بالتواريخ</h3>
+                    <div id="attendance-history" class="space-y-3 max-h-96 overflow-y-auto">
+                        <p class="text-gray-500">جارِ تحميل السجل...</p>
+                    </div>
+                </div>
+            `;
+            
+            // Start fetching data and listening for changes
+            loadChildProfileAndAttendance(childId);
+        }
+
+        /**
+         * Loads child details and sets up real-time attendance listener.
+         */
+        async function loadChildProfileAndAttendance(childId) {
+            // 1. Load Child Details
+            const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+            try {
+                const childSnap = await getDoc(childDocRef);
+                if (childSnap.exists()) {
+                    const data = childSnap.data();
+                    document.getElementById('child-name-display').innerText = data.name;
+                    document.getElementById('child-grade-display').innerText = data.grade;
+                } else {
+                    showModal('خطأ', 'لم يتم العثور على ملف الولد.');
+                    // If QR scan fails, go back to appropriate view
+                    navigate(isAdmin ? 'admin_scan' : 'history_search'); 
+                    return;
+                }
+            } catch (error) {
+                console.error("Error loading child profile:", error);
+                showModal('خطأ في قاعدة البيانات', 'لم نتمكن من الوصول لملف الولد.');
+                return;
+            }
+
+            // 2. Setup Real-time Attendance Listener
+            const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
+            
+            // onSnapshot for real-time updates
+            onSnapshot(attendanceCollectionRef, (snapshot) => {
+                const historyContainer = document.getElementById('attendance-history');
+                if (!historyContainer) return; // Guard for view change
+
+                const todayDocId = formatDateToDocId(new Date());
+                let todayAttendance = { mass: false, meeting: false }; // Initialize for use below
+                const allAttendance = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    allAttendance.push({ id: doc.id, ...data });
+                    if (doc.id === todayDocId) {
+                        todayAttendance = { mass: data.mass || false, meeting: data.meeting || false };
+                    }
+                });
+
+                // Update Today's Status
+                document.getElementById('mass-status').className = todayAttendance.mass ? 'text-lg font-bold text-green-600' : 'text-lg font-bold text-red-500';
+                document.getElementById('mass-status').innerText = todayAttendance.mass ? 'حضر' : 'غير مسجل';
+
+                document.getElementById('meeting-status').className = todayAttendance.meeting ? 'text-lg font-bold text-green-600' : 'text-lg font-bold text-red-500';
+                document.getElementById('meeting-status').innerText = todayAttendance.meeting ? 'حضر' : 'غير مسجل';
+
+                // Render History (Sort by date descending)
+                allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+
+                if (allAttendance.length === 0) {
+                    historyContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور حتى الآن.</p>';
+                    return;
+                }
+
+                historyContainer.innerHTML = allAttendance.map(att => `
+                    <div class="flex justify-between items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-100 border-l-4 border-yellow-500' : 'bg-gray-50'}">
+                        <span class="font-bold text-gray-800">${att.id}</span>
+                        <div class="flex space-x-3 space-x-reverse">
+                            <span class="text-sm font-medium ${att.mass ? 'text-green-600' : 'text-red-500'}">
+                                القداس: ${att.mass ? 'حضر' : 'غائب'}
+                            </span>
+                            <span class="text-sm font-medium ${att.meeting ? 'text-green-600' : 'text-red-500'}">
+                                الإجتماع: ${att.meeting ? 'حضر' : 'غائب'}
+                            </span>
+                        </div>
+                    </div>
+                `).join('');
+
+            }, (error) => {
+                console.error("Error setting up snapshot listener:", error);
+                showModal('خطأ في المتابعة', 'حدث خطأ أثناء تحميل سجل الحضور في الوقت الفعلي.');
+            });
+        }
+
+        /**
+         * Records attendance for mass or meeting for the current date.
+         */
+        window.recordAttendance = async function(childId, type) {
+            if (!isAdmin) {
+                return showModal('صلاحيات مطلوبة', 'يجب أن تكون مسجلاً كـ "خادم" لتسجيل الحضور.');
+            }
+            const todayDocId = formatDateToDocId(new Date());
+            const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), todayDocId);
+
+            const dataToUpdate = {
+                date: todayDocId,
+                [`${type}`]: true, // mass: true or meeting: true
+                [`${type}Timestamp`]: Date.now()
+            };
+
+            try {
+                // Use setDoc with merge: true to create the document if it doesn't exist, 
+                // or update only the specified fields if it does.
+                await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
+                showModal('تسجيل ناجح', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} لتاريخ اليوم بنجاح.`);
+            } catch (error) {
+                console.error(`Error recording ${type} attendance:`, error);
+                showModal('خطأ في التسجيل', `حدث خطأ أثناء محاولة تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'}.`);
+            }
+        }
+        
+        // ... (omitted remaining functions for brevity) ...
+        
+        /**
+         * Renders the search view for children to check their own history.
+         */
+        function renderHistorySearchView(container) {
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">عرض سجل الحضور الخاص بي</h2>
+                    <p class="mb-4 text-gray-700">أدخل الكود الخاص بك (ID) لعرض سجل حضورك:</p>
+                    <form id="history-search-form" class="space-y-4">
+                        <div>
+                            <label for="history-id-input" class="block text-sm font-medium text-gray-700 mb-1">كود الولد (Child ID):</label>
+                            <input type="text" id="history-id-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="أدخل كود التسجيل هنا">
+                        </div>
+                        <button type="submit" class="w-full primary-btn bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">عرض السجل</button>
+                    </form>
+                </div>
+            `;
+            document.getElementById('history-search-form').onsubmit = handleHistorySearch;
+        }
+        
+        /**
+         * Handles history search form submission.
+         */
+        async function handleHistorySearch(e) {
+            e.preventDefault();
+            const id = document.getElementById('history-id-input').value.trim();
+             if (!isFirebaseActive) {
+                showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
+                    <p class="text-xs text-red-500 mb-3">
+                        للتجربة: يمكنك استخدام أي كود، ولكن لن يتم عرض ملف الولد.
+                    </p>
+                `);
+                 return;
+            }
+
+            if (id) {
+                 // Check if the ID is valid
+                const docRef = doc(db, getChildrenCollectionPath(), id);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    navigate('child_history', id);
+                } else {
+                    showModal('كود غير صحيح', 'لم يتم العثور على ملفك بهذا الكود (ID). تأكد من الكود المدخل.');
+                }
+            }
+        }
+        
+        /**
+         * Renders the full attendance history for the child.
+         */
+        function renderChildHistoryView(container, childId) {
+            if (!childId) {
+                container.innerHTML = '<p class="text-red-600 text-center mt-8">خطأ: لم يتم تحديد كود الولد.</p>';
+                return;
+            }
+            
+            if (!isFirebaseActive) {
+                 container.innerHTML = `
+                    <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
+                        <h2 class="text-2xl font-bold mb-4 text-red-500">⚠️ وضع المحاكاة</h2>
+                        <p class="text-gray-700 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض سجل الحضور.</p>
+                        <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لعرض البيانات الحقيقية.</p>
+                         <button onclick="navigate('history_search')" class="mt-6 primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">🔍 بحث عن كود آخر</button>
+                    </div>
+                `;
+                return;
+            }
+
+             container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                    <h2 class="text-2xl font-bold mb-4 text-custom-purple border-b pb-2">سجل حضوري</h2>
+                    <p class="text-gray-600 mb-6">الاسم: <span id="child-history-name" class="font-semibold">جاري التحميل...</span></p>
+
+                    <h3 class="text-xl font-bold mb-4">تفاصيل الحضور</h3>
+                    <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto">
+                        <p class="text-gray-500">جارِ تحميل السجل...</p>
+                    </div>
+                     <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">🔍 بحث عن كود آخر</button>
+                </div>
+            `;
+            
+            // Load and listen for data
+            loadChildHistory(childId);
+        }
+
+        /**
+         * Loads child history details and sets up real-time attendance listener for the child view.
+         */
+        async function loadChildHistory(childId) {
+             // 1. Load Child Details
+            const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+            try {
+                const childSnap = await getDoc(childDocRef);
+                if (childSnap.exists()) {
+                    const data = childSnap.data();
+                    document.getElementById('child-history-name').innerText = data.name;
+                } else {
+                    document.getElementById('child-history-name').innerText = 'غير موجود';
+                    return;
+                }
+            } catch (error) {
+                console.error("Error loading child profile:", error);
+                document.getElementById('child-history-name').innerText = 'خطأ في التحميل';
+                return;
+            }
+
+
+            // 2. Setup Real-time Attendance Listener
+            const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
+            
+            onSnapshot(attendanceCollectionRef, (snapshot) => {
+                const listContainer = document.getElementById('child-attendance-list');
+                if (!listContainer) return; // Guard for view change
+
+                const allAttendance = [];
+                snapshot.forEach(doc => {
+                    allAttendance.push({ id: doc.id, ...doc.data() });
+                });
+
+                // Render History (Sort by date descending)
+                allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+
+                if (allAttendance.length === 0) {
+                    listContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور لك حتى الآن.</p>';
+                    return;
+                }
+
+                listContainer.innerHTML = allAttendance.map(att => `
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl bg-blue-50 border-r-4 border-blue-400">
+                        <span class="font-bold text-lg text-blue-800 mb-2 sm:mb-0">${att.id}</span>
+                        <div class="flex gap-4">
+                            <span class="text-sm font-medium ${att.mass ? 'text-green-600 bg-green-100' : 'text-red-500 bg-red-100'} px-2 py-1 rounded-full">
+                                القداس: ${att.mass ? '✅ حاضر' : '❌ غائب'}
+                            </span>
+                            <span class="text-sm font-medium ${att.meeting ? 'text-green-600 bg-green-100' : 'text-red-500 bg-red-100'} px-2 py-1 rounded-full">
+                                الإجتماع: ${att.meeting ? '✅ حاضر' : '❌ غائب'}
+                            </span>
+                        </div>
+                    </div>
+                `).join('');
+
+            }, (error) => {
+                console.error("Error setting up history snapshot listener:", error);
+                listContainer.innerHTML = '<p class="text-red-600 p-4">خطأ في تحميل البيانات.</p>';
+            });
+        }
+
+
+        // Initialize the app on load
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('loading').classList.remove('hidden');
+            initializeAppAndAuth();
+        });
+
+    </script>
+</body>
+</html>
