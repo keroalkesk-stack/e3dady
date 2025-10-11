@@ -314,14 +314,74 @@
                             <span class="text-sm mt-1">(لتسجيل الحضور عبر مسح الكود)</span>
                         </button>
                         
-                        <!-- Makhdoum Button -->
-                        <button onclick="navigate('register')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
+                        <!-- Makhdoum Button - Now navigates to options -->
+                        <button onclick="navigate('makhdoum_options')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
                             <span class="text-4xl mb-2">👦👧</span>
                             <span class="text-xl font-bold">هل أنت مخدوم؟</span>
                             <span class="text-sm mt-1">(للتسجيل وعرض السجل)</span>
                         </button>
                     </div>
 
+                </div>
+            `;
+        }
+        
+        /**
+         * Renders the options view for a Makhdoum (New Registration or Find Code).
+         */
+        function renderMakhdoumOptionsView(container) {
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                    <h2 class="text-3xl font-bold mb-8 text-green-500 text-center">خيارات المخدوم</h2>
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <!-- New Registration -->
+                        <button onclick="navigate('register')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
+                            <span class="text-4xl mb-2">📝</span>
+                            <span class="text-xl font-bold">تسجيل جديد</span>
+                            <span class="text-sm mt-1">(لأول مرة)</span>
+                        </button>
+                        
+                        <!-- Find Code (New Search View) -->
+                        <button onclick="navigate('find_code_search')" class="large-home-btn border-blue-500 hover:bg-blue-500 hover:text-white transition duration-200 rounded-xl">
+                            <span class="text-4xl mb-2">🔍</span>
+                            <span class="text-xl font-bold">نسيت الكود / ضاع مني</span>
+                            <span class="text-sm mt-1">(للبحث باسمك)</span>
+                        </button>
+                    </div>
+                    
+                    <div class="mt-8 text-center">
+                        <button onclick="navigate('home')" class="text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        /**
+         * Renders the view for searching for a lost code/ID by name.
+         */
+        function renderFindCodeSearchView(container) {
+            container.innerHTML = `
+                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 text-blue-500 border-b pb-2">البحث عن كود التسجيل (ID)</h2>
+                    <p class="mb-4 text-gray-700">أدخل اسمك بالكامل للبحث عن كود التسجيل الخاص بك وعرضه كـ QR Code.</p>
+                    <form onsubmit="event.preventDefault(); handleFindCodeSearch()" class="space-y-4">
+                        <div>
+                            <label for="find-code-name-input" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
+                            <input type="text" id="find-code-name-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="كما تم تسجيله في المرة الأولى">
+                        </div>
+                        <button type="submit" id="find-code-btn" class="w-full primary-btn bg-blue-500 text-white rounded-lg hover:bg-blue-600">بحث وعرض الكود</button>
+                    </form>
+                    
+                    <div id="find-code-result" class="mt-6 p-4 border-l-4 border-blue-500 bg-blue-50 rounded-lg hidden text-center">
+                         <p class="font-bold text-blue-700 mb-2">تم العثور على الكود! 🎉</p>
+                         <p class="text-gray-700 mb-4">هذا هو الـ QR Code الخاص بك:</p>
+                         <div id="found-qr-code-area" class="text-center p-4 border-4 border-gray-200 rounded-lg">
+                             <!-- QR Code will be generated here -->
+                         </div>
+                         <p class="mt-4 text-sm text-gray-500">احفظ هذا الكود لتسجيل حضورك في المرات القادمة.</p>
+                     </div>
+                     <button onclick="navigate('makhdoum_options')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للخيارات</button>
                 </div>
             `;
         }
@@ -613,7 +673,7 @@
             loadChildHistory(childId);
         }
 
-        // --- Navigation and Rendering ---
+        // --- Navigation and Main Logic ---
 
         /**
          * Navigates to a new view and updates the UI.
@@ -646,7 +706,7 @@
                 // Public access (Makhdoum/Child)
                 navButtons.innerHTML = `
                     <button onclick="navigate('register')" id="nav-register" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">تسجيل جديد</button>
-                    <button onclick="navigate('history_search')" id="nav-history" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">عرض سجل الحضور</button>
+                    <button onclick="navigate('makhdoum_options')" id="nav-history" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">خيارات المخدوم</button>
                 `;
                  navButtons.classList.remove('hidden', 'justify-between');
                  navButtons.classList.add('flex', 'justify-center');
@@ -659,6 +719,14 @@
                 case 'home':
                 case 'admin_login': // Reusing admin_login button to ask for Khadem Name/Password
                     renderHomeView(content);
+                    break;
+                case 'makhdoum_options':
+                    renderMakhdoumOptionsView(content);
+                    activeNavId = 'nav-history'; // Highlight makhdoum options button
+                    break;
+                case 'find_code_search':
+                    renderFindCodeSearchView(content);
+                    activeNavId = 'nav-history';
                     break;
                 case 'admin_register': // Registration is now redundant, redirecting
                     navigate('register');
@@ -774,6 +842,97 @@
         }
 
         /**
+         * Handles the search logic for finding an existing code by name.
+         */
+        async function handleFindCodeSearch() {
+            if (!isFirebaseActive) {
+                return showModal('⚠️ وضع المحاكاة', 'لا يمكن البحث عن البيانات بدون اتصال بقاعدة بيانات Firebase.');
+            }
+
+            // Removed .trim() to be more forgiving in Arabic names
+            const queryName = document.getElementById('find-code-name-input').value; 
+            const trimmedQueryName = queryName.trim(); 
+            const resultDiv = document.getElementById('find-code-result');
+            const searchButton = document.getElementById('find-code-btn');
+            const qrCodeArea = document.getElementById('found-qr-code-area');
+
+            if (!trimmedQueryName) {
+                 showModal('خطأ', 'الرجاء إدخال الاسم بالكامل للبحث.');
+                 return;
+            }
+
+            searchButton.disabled = true;
+            searchButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري البحث...';
+            resultDiv.classList.add('hidden');
+            
+            try {
+                const childrenColRef = collection(db, getChildrenCollectionPath());
+                
+                // 1. Use the Unicode trick to efficiently find documents that START with the query name
+                // Using the untrimmed value in the where clause might sometimes help with weird spaces.
+                const q = query(
+                    childrenColRef, 
+                    where('name', '>=', queryName),
+                    where('name', '<=', queryName + '\uf7ff') 
+                );
+                
+                const querySnapshot = await getDocs(q);
+                let foundDoc = null;
+                
+                // 2. Filter in JavaScript for an EXACT match (case-insensitive and trim spaces)
+                querySnapshot.forEach(docSnap => {
+                    // Normalize both names for comparison
+                    const storedName = docSnap.data().name.trim().toLowerCase();
+                    const enteredName = trimmedQueryName.toLowerCase();
+
+                    if (storedName === enteredName) {
+                         foundDoc = docSnap;
+                    }
+                });
+
+                
+                if (foundDoc) {
+                    const childId = foundDoc.id;
+                    const qrLink = `${window.location.origin}${window.location.pathname}?id=${childId}`;
+
+                    // Update the QR Code area structure
+                    qrCodeArea.innerHTML = `
+                        <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
+                        <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
+                    `;
+                    
+                    // Generate QR Code 
+                    // IMPORTANT: We need to ensure the old canvas is cleared before creating a new one
+                    const existingQrCanvas = document.getElementById("found-qrcode-canvas");
+                    if (existingQrCanvas) {
+                         existingQrCanvas.innerHTML = '';
+                         new QRCode(existingQrCanvas, {
+                             text: qrLink,
+                             width: 200,
+                             height: 200,
+                             colorDark : "#4285F4", // Use blue color for finding code
+                             colorLight : "#ffffff",
+                             correctLevel : QRCode.CorrectLevel.H
+                         });
+                    }
+
+
+                    resultDiv.classList.remove('hidden');
+                    document.querySelector('#find-code-result .font-bold').innerText = `تم العثور على الكود للاسم: ${foundDoc.data().name} 🎉`;
+
+                } else {
+                    showModal('⚠️ لم يتم العثور على الكود', 'لم يتم العثور على كود تسجيل بالاسم المدخل. يرجى التأكد من كتابة الاسم بالكامل كما سجلته في المرة الأولى.');
+                }
+            } catch (error) {
+                console.error("Error finding code by name:", error);
+                showModal('خطأ في الاتصال', 'حدث خطأ أثناء البحث عن الكود. يرجى المحاولة مرة أخرى.');
+            } finally {
+                searchButton.disabled = false;
+                searchButton.innerHTML = 'بحث وعرض الكود';
+            }
+        }
+
+        /**
          * Handles manual ID input (simulating QR scan).
          */
         async function handleAdminScan(e) {
@@ -781,11 +940,7 @@
             const id = document.getElementById('child-id-input').value.trim();
             
             if (!isFirebaseActive) {
-                showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
-                    <p class="text-xs text-red-500 mb-3">
-                        للتجربة: يمكنك استخدام أي كود، ولكن لن يتم عرض ملف الولد.
-                    </p>
-                `);
+                showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.');
                  return;
             }
 
@@ -820,13 +975,18 @@
                 return showModal('خطأ', 'الرجاء إدخال اسمك كخادم أولاً.');
             }
 
-            // Save Khadem name globally and proceed to profile
+            // Save Khadem name globally and proceed
             khademName = name;
             showModal('نجاح التحقق', `أهلاً بك يا ${khademName}! جارِ فتح ملف المتابعة.`);
             document.getElementById('user-id-display').innerText = `خادم: ${khademName}`;
             
-            // Navigate to the profile view using the verified Khadem Name
-            navigate('profile', childId);
+            if (childId && childId !== 'null') { // check if a specific child was scanned
+                 // Navigate to the profile view using the verified Khadem Name
+                navigate('profile', childId);
+            } else {
+                 // If no child was scanned, go to the children list (default admin landing)
+                 navigate('children_list');
+            }
         }
 
         /**
@@ -864,25 +1024,19 @@
                 }
 
                 // 2. Search by Name (using Firestore query logic for partial match starting)
-                // Note: Firestore doesn't support fuzzy search, so we search for documents where 
-                // the 'name' field starts with the query.
-                // We ensure we don't duplicate results if it was found by ID.
+                // We use Unicode trick for "starts with"
                 if (docs.length === 0 || !docs.some(d => d.name.toLowerCase().includes(queryText.toLowerCase()))) {
-                    // Start search (case-insensitive approximation)
                     const q = query(
                         childrenColRef, 
                         where('name', '>=', queryText),
-                        where('name', '<=', queryText + '\uf7ff') // Unicode trick for "starts with"
+                        where('name', '<=', queryText + '\uf7ff') 
                     );
                     
                     const querySnapshot = await getDocs(q);
                     querySnapshot.forEach(docSnap => {
-                         // Only add if not already added by ID search
-                        if (!docs.some(d => d.id === docSnap.id)) {
-                             // Basic case-insensitive filter in JS because Unicode trick is case-sensitive for Firestore
-                             if (docSnap.data().name.toLowerCase().startsWith(queryText.toLowerCase())) {
-                                 docs.push({ id: docSnap.id, ...docSnap.data() });
-                             }
+                         // Only add if not already added by ID search and name starts with query
+                        if (!docs.some(d => d.id === docSnap.id) && docSnap.data().name.toLowerCase().startsWith(queryText.toLowerCase())) {
+                             docs.push({ id: docSnap.id, ...docSnap.data() });
                         }
                     });
                 }
@@ -1067,7 +1221,8 @@
             }, (error) => {
                 console.error("Error setting up snapshot listener:", error);
                 showModal('خطأ في المتابعة', 'حدث خطأ أثناء تحميل سجل الحضور في الوقت الفعلي.');
-            });
+            }
+            );
         }
 
         /**
