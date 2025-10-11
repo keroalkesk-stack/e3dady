@@ -125,22 +125,26 @@
 
         // --- START: CUSTOM CONFIGURATION FOR GITHUB DEPLOYMENT ---
         const GITHUB_FIREBASE_CONFIG = {
-             apiKey: "AIzaSy0ByGubyWvdaIVJETOQF6EMJHWF7mcg", 
+             // IMPORTANT: API Key has been updated with the key provided by the user
+             apiKey: "AIzaSyDE3ygOByNVdAI1vJETq6F6eMJHWVF7mcg", 
              authDomain: "sundayschoolattendance-84656.firebaseapp.com", 
              projectId: "sundayschoolattendance-84656", 
              storageBucket: "sundayschoolattendance-84656.appspot.com",
              messagingSenderId: "444562341363",
-             appId: "1:444562341363:web:10ff6f84df01ae599a686"
+             appId: "1:444562341363:web:18ffef684df01ae599a686"
+             // Note: measurementId is not needed for core functionality.
         };
         
         // إذا لم يتم توفير إعدادات Canvas (أي عند التشغيل خارج Canvas)، استخدم إعدادات GitHub
-        if (!firebaseConfig) {
+        if (!firebaseConfig || firebaseConfig.apiKey === 'YOUR_API_KEY') {
              firebaseConfig = GITHUB_FIREBASE_CONFIG;
         }
         
         // Check if real config is provided and is NOT the placeholder 'YOUR_API_KEY'
-        if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+        if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY_HERE") {
             isFirebaseActive = true;
+        } else {
+             isFirebaseActive = false;
         }
         // --- END: CUSTOM CONFIGURATION FOR GITHUB DEPLOYMENT ---
 
@@ -220,7 +224,7 @@
                 document.getElementById('loading').innerHTML = `
                     <p class="text-red-600 font-bold">خطأ في التهيئة الحرجة: ${error.message}</p>
                     <p class="text-sm text-red-500 mt-2">
-                        الرجاء التأكد من تفعيل **Anonymous** في Firebase > Authentication.
+                        إذا ظهر الخطأ (auth/api-key-not-valid) أثناء التشغيل على GitHub، الرجاء وضع مفتاح API الصحيح في الكود.
                     </p>
                 `;
             }
