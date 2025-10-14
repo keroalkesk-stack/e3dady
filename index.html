@@ -105,7 +105,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, where, increment, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, where, increment, arrayUnion, arrayRemove, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global Firebase variables
@@ -2083,8 +2083,11 @@
              // 2. Setup Real-time Attendance Listener (for daily attendance and history)
              const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
              
-             // Listen to the daily attendance records
-             onSnapshot(attendanceCollectionRef, (snapshot) => {
+             // --- FIX: Use query to limit to the latest 15 days for faster load ---
+             const q = query(attendanceCollectionRef, orderBy('date', 'desc'), limit(15));
+
+             // Listen to the daily attendance records (limited query)
+             onSnapshot(q, (snapshot) => {
                  const historyContainer = document.getElementById('attendance-history');
                  if (!historyContainer) return; 
 
@@ -2130,15 +2133,15 @@
                  }
 
 
-                 // Render History (Sort by date descending)
-                 allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+                 // Render History (No need to sort since query is already sorted by date desc)
+                 // Note: Since we are limiting the query, allAttendance might not contain all data.
 
                  if (allAttendance.length === 0) {
                      historyContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور حتى الآن.</p>';
                      return;
                  }
 
-                 historyContainer.innerHTML = allAttendance.map(att => {
+                 let htmlContent = allAttendance.map(att => {
                      const dailyTotalPoints = (att.massPoints || 0) + (att.meetingPoints || 0) + (att.bonusPoints || 0) - (att.penaltyPoints || 0);
                      
                      // Display Bonus
@@ -2187,6 +2190,22 @@
                       </div>
                       `;
                  }).join('');
+
+                 // --- Append Load All Button if count reaches limit (indicates more data exists) ---
+                 // This is a simple check; a more robust solution would use pagination tokens (cursors).
+                 // For simplicity, we just add the button if we hit the limit.
+                 if (snapshot.size === 15) {
+                     htmlContent += `
+                         <div class="text-center mt-4">
+                             <button onclick="loadFullAttendanceHistory('${childId}', this)" class="primary-btn bg-gray-500 text-white rounded-lg hover:bg-gray-600 text-sm">
+                                 ⬇️ تحميل السجل بالكامل (قد يستغرق وقتاً)
+                             </button>
+                         </div>
+                     `;
+                 }
+
+                 historyContainer.innerHTML = htmlContent;
+
              }, (error) => {
                  console.error("Error setting up attendance snapshot listener:", error);
                  showModal('خطأ في المتابعة', 'حدث خطأ أثناء تحميل سجل الحضور في الوقت الفعلي.');
@@ -2204,6 +2223,87 @@
              });
 
         }
+
+        /**
+         * Loads the full attendance history when the 'Load More' button is clicked.
+         * @param {string} childId 
+         * @param {HTMLElement} button 
+         */
+        window.loadFullAttendanceHistory = async function(childId, button) {
+            button.disabled = true;
+            button.innerText = 'جاري التحميل...';
+            
+            const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
+            // Get ALL attendance records (no limit)
+            const snapshot = await getDocs(attendanceCollectionRef);
+            
+            const historyContainer = document.getElementById('attendance-history');
+            const todayDocId = formatDateToDocId(new Date());
+            const allAttendance = [];
+
+            snapshot.forEach(doc => {
+                allAttendance.push({ id: doc.id, ...doc.data() });
+            });
+            
+            // Sort to ensure all history is properly ordered
+            allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+
+            if (allAttendance.length === 0) {
+                 historyContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور حتى الآن.</p>';
+                 return;
+            }
+
+            historyContainer.innerHTML = allAttendance.map(att => {
+                const dailyTotalPoints = (att.massPoints || 0) + (att.meetingPoints || 0) + (att.bonusPoints || 0) - (att.penaltyPoints || 0);
+                     
+                // Display Bonus
+                const bonusInfo = att.bonusPoints ? 
+                     `<div class="mt-1">
+                          <p class="text-xs text-blue-700">🎁 بونص: +${att.bonusPoints} (${att.bonusReason || 'بدون سبب'})</p>
+                          ${att.bonusKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.bonusKhadem}</p>` : ''}
+                      </div>` : '';
+
+                // NEW: Display Penalty
+                const penaltyInfo = att.penaltyPoints ? 
+                     `<div class="mt-1">
+                          <p class="text-xs text-penalty">⛔ خصم: -${att.penaltyPoints} (${att.penaltyReason || 'بدون سبب'})</p>
+                          ${att.penaltyKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.penaltyKhadem}</p>` : ''}
+                      </div>` : '';
+
+                const totalPointsHtml = dailyTotalPoints > 0 ? 
+                     `<span class="text-lg font-bold text-green-700 mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span>` : 
+                     `<span class="text-lg font-bold text-penalty mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span>`;
+               
+                const massKhademDisplay = att.massKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.massKhadem}</p>` : '';
+                const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
+
+                return `
+                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-100 border-l-4 border-yellow-500' : 'bg-gray-50'}">
+                     <span class="font-bold text-gray-800">${att.id}</span>
+                     <div class="flex flex-col items-end sm:items-center">
+                         ${totalPointsHtml}
+                         <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
+                              <div class="flex flex-col items-end">
+                                   <span class="text-sm font-medium ${att.mass ? 'text-green-600' : 'text-red-500'}">
+                                       القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
+                                   </span>
+                                   ${massKhademDisplay}
+                              </div>
+                              <div class="flex flex-col items-end">
+                                   <span class="text-sm font-medium ${att.meeting ? 'text-green-600' : 'text-red-500'}">
+                                       الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
+                                   </span>
+                                   ${meetingKhademDisplay}
+                              </div>
+                         </div>
+                         ${bonusInfo}
+                         ${penaltyInfo}
+                     </div>
+                 </div>
+                 `;
+            }).join('');
+        }
+
 
         /**
          * Renders the search view for children to check their own history.
