@@ -1082,6 +1082,8 @@
                          birthdate, 
                          photoBase64: photoBase64 || null, // Save photo Base64 string
                          totalPoints: 0, // Initialize total points
+                         massTotalCount: 0, // NEW: Initialize mass count
+                         meetingTotalCount: 0, // NEW: Initialize meeting count
                          createdAt: new Date().toISOString(), // Use current timestamp for registration date
                      });
                      childId = docRef.id;
@@ -1497,9 +1499,12 @@
                  // 3. Record the attendance and points for the specific day
                  await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
                  
-                 // 4. Update the total points on the main child document (only happens ONCE)
+                 // 4. Update the total points and the specific count on the main child document (only happens ONCE)
+                 const countField = type === 'mass' ? 'massTotalCount' : 'meetingTotalCount';
+
                  await updateDoc(childDocRef, {
-                      totalPoints: increment(points) // Use Firestore increment for safety
+                      totalPoints: increment(points), // Use Firestore increment for safety
+                      [countField]: increment(1) // NEW: Increment the specific total count
                  });
 
                  if (!isQuickRecord) {
@@ -1696,12 +1701,19 @@
              const childrenColRef = collection(db, getChildrenCollectionPath());
              
              // Use onSnapshot for real-time updates on the list
-             onSnapshot(childrenColRef, async (snapshot) => {
+             // NOTE: This now ONLY reads the main child documents, relying on massTotalCount/meetingTotalCount fields.
+             onSnapshot(childrenColRef, (snapshot) => {
                  const allChildren = [];
                  
                  snapshot.forEach(doc => {
                      const data = doc.data();
-                     allChildren.push({ id: doc.id, ...data });
+                     // Use the pre-calculated counts saved in the main document
+                     allChildren.push({ 
+                         id: doc.id, 
+                         ...data,
+                         massCount: data.massTotalCount || 0, // NEW: Use the pre-calculated count
+                         meetingCount: data.meetingTotalCount || 0 // NEW: Use the pre-calculated count
+                     });
                  });
 
                  if (allChildren.length === 0) {
@@ -1709,40 +1721,11 @@
                       return;
                  }
                  
-                 // --- Fetch Attendance Details for each child ---
-                 // This part requires fetching all attendance data for accurate total Mass/Meeting counts.
-                 // WARNING: This can be heavy on reads for large services, but ensures accuracy.
-                 
-                 // Create an array of promises to fetch attendance for all children
-                 const attendancePromises = allChildren.map(child => 
-                     getDocs(collection(db, getAttendanceCollectionPath(child.id)))
-                 );
-
-                 const attendanceSnapshots = await Promise.all(attendancePromises);
-
-                 const detailedChildren = allChildren.map((child, index) => {
-                     const attSnapshot = attendanceSnapshots[index];
-                     let massCount = 0;
-                     let meetingCount = 0;
-
-                     attSnapshot.forEach(attDoc => {
-                         const attData = attDoc.data();
-                         if (attData.mass) massCount++;
-                         if (attData.meeting) meetingCount++;
-                     });
-
-                     return {
-                         ...child,
-                         massCount,
-                         meetingCount
-                     };
-                 });
-                 
                  // Sort children by Total Points descending
-                 detailedChildren.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
+                 allChildren.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
 
                  // Render the table rows
-                 listContainer.innerHTML = detailedChildren.map((child, index) => {
+                 listContainer.innerHTML = allChildren.map((child, index) => {
                      const photoHtml = child.photoBase64 
                          ? `<img src="${child.photoBase64}" class="w-8 h-8 rounded-full border border-gray-300 object-cover ml-2 inline" alt="صورة">`
                          : `<div class="w-8 h-8 rounded-full border border-gray-300 bg-gray-100 ml-2 inline-flex items-center justify-center text-sm">👤</div>`;
