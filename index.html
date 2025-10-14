@@ -35,36 +35,34 @@
             border: 2px solid;
             text-align: center;
         }
-        /* تصميم زر جوجل المخصص */
-        .google-btn {
-            background-color: #4285F4;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0.75rem 1rem;
-            font-size: 1.125rem;
-            font-weight: bold;
+        /* Dashboard table responsive styles */
+        .dashboard-table-container {
+            overflow-x: auto;
+            width: 100%;
         }
-        .google-btn:hover {
-            background-color: #3367D6;
+        .dashboard-table {
+            min-width: 800px; /* Minimum width to prevent crushing columns */
         }
-        .google-icon {
-            background-color: white;
-            padding: 0.5rem;
-            border-radius: 9999px; /* rounded-full */
-            margin-left: 1rem; /* mr-4 */
+        .dashboard-table th, .dashboard-table td {
+            padding: 0.75rem;
+            text-align: center;
         }
+        .dashboard-table thead {
+            background-color: #e0e7ff; /* Indigo-100 */
+        }
+        /* Style for penalty section */
+        .bg-penalty { background-color: #fee2e2; }
+        .text-penalty { color: #dc2626; }
     </style>
 </head>
 <body class="p-4 sm:p-6 min-h-screen flex items-start justify-center">
 
-    <div id="app" class="w-full max-w-4xl">
+    <div id="app" class="w-full max-w-7xl"> <!-- Increased max-w for dashboard -->
         <div class="text-center mb-8">
             <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-800 mb-2">👋🏼 متابعة الحضور</h1>
             <p class="text-gray-600">لتسجيل قداسات واجتماعات مدارس الأحد</p>
-            <div id="auth-status-display" class="mt-2 text-sm">
-                <span id="user-id-display" class="text-gray-400">مستخدم عام</span>
+            <div id="auth-status-display" class="mt-2 text-sm flex items-center justify-center">
+                <span id="user-id-display" class="text-gray-600 font-semibold ml-2">مستخدم عام</span>
                 <!-- زر الخروج مخفي الآن لأنه لا يوجد تسجيل دخول رسمي -->
                 <button id="logout-button" onclick="handleLogout()" class="hidden px-3 py-1 text-xs text-white logout-btn rounded-full mr-2">تسجيل خروج</button>
             </div>
@@ -78,7 +76,7 @@
 
         <!-- Main Content Area -->
         <div id="content" class="space-y-6">
-            <!-- Navigation Buttons (Hidden by default, shown when logged in or on public view) -->
+            <!-- Navigation Buttons -->
             <div id="nav-buttons" class="hidden justify-center space-x-4 space-x-reverse mb-6 flex-wrap gap-2">
                 <!-- Buttons will be rendered dynamically -->
             </div>
@@ -107,16 +105,26 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, addDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, where, increment, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global Firebase variables
         let app, db, auth, userId;
         let currentPage = 'home'; // Start on the new home page
         let currentChildId = null; 
-        let isFirebaseActive = false;
-        let khademName = null; // NEW: To store the Khadem name for attendance
-        const ADMIN_PASSWORD = "service2025"; // NEW: موحد لكل الخدام
+        let isFirebaseActive = localStorage.getItem('isFirebaseActive') === 'true' || false;
+        let khademName = localStorage.getItem('khademName') || null; // Load Khadem name from local storage
+        let registrationQrId = null; // Store the child ID after registration for download/copy
+        let registrationChildName = null; // Store the child name for file download naming
+        let registrationChildPhotoBase64 = null; // Store the photo base64 string
+        let currentPointsSettings = { massPoints: 10, meetingPoints: 5 }; // Global variable for points settings
+        
+        const ADMIN_PASSWORD = "service2025"; // موحد لكل الخدام
+        // Global Constant for the service title on the QR image
+        const SERVICE_TITLE = "خدمة فتيان اعدادى كنيسة الشهيد العظيم مارجرجس ببا";
+        const TITLE_COLOR = '#059669'; // Emerald Green for title text
+        const BORDER_COLOR = '#6B46C1'; // Custom Purple for the frame
+
 
         // --- Firebase Setup Handling ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -132,7 +140,6 @@
              storageBucket: "sundayschoolattendance-84656.appspot.com",
              messagingSenderId: "444562341363",
              appId: "1:444562341363:web:18ffef684df01ae599a686"
-             // Note: measurementId is not needed for core functionality.
         };
         
         // إذا لم يتم توفير إعدادات Canvas (أي عند التشغيل خارج Canvas)، استخدم إعدادات GitHub
@@ -142,9 +149,11 @@
         
         // Check if real config is provided and is NOT the placeholder 'YOUR_API_KEY'
         if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY_HERE") {
-            isFirebaseActive = true;
+             isFirebaseActive = true;
+             localStorage.setItem('isFirebaseActive', 'true');
         } else {
              isFirebaseActive = false;
+             localStorage.setItem('isFirebaseActive', 'false');
         }
         // --- END: CUSTOM CONFIGURATION FOR GITHUB DEPLOYMENT ---
 
@@ -153,6 +162,22 @@
 
         // Utility delay function
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+        // --- Points Configuration Functions ---
+        
+        /**
+         * @returns {string} The document path for the points configuration settings.
+         */
+        function getSettingsDocPath() {
+             return `artifacts/${appId}/public/data/points_config/current_settings`;
+        }
+
+        /**
+         * Returns the current points settings (massPoints and meetingPoints).
+         */
+        function getPointsSettings() {
+            return currentPointsSettings;
+        }
 
 
         // --- Auth and Initialization (Simplified for Anonymous/Token) ---
@@ -202,7 +227,10 @@
                 // 4. Set up the state.
                 userId = user.uid;
                 
-                // 5. Hide loading and navigate
+                // 5. Load point settings before rendering any page that uses them
+                await loadCurrentPointsSettings();
+
+                // 6. Hide loading and navigate
                 document.getElementById('loading').classList.add('hidden');
                 
                 const params = new URLSearchParams(window.location.search);
@@ -211,7 +239,7 @@
                 if (idFromUrl) {
                     currentChildId = idFromUrl;
                     
-                    // NEW: If a child ID is scanned, go directly to verification view
+                    // If a child ID is scanned, go directly to verification view
                     renderAttendanceVerificationView(document.getElementById('view-content'), currentChildId);
                     
                 } else {
@@ -229,17 +257,60 @@
                 `;
             }
         }
-        
-        // --- REMOVED: handleAdminRegister & handleGoogleLogin ---
-        // (Now using a single verification step on scan)
 
+        /**
+         * Loads the current point configuration from Firestore.
+         */
+        async function loadCurrentPointsSettings() {
+             if (!isFirebaseActive) return;
+             try {
+                 const settingsDocRef = doc(db, getSettingsDocPath());
+                 const docSnap = await getDoc(settingsDocRef);
+
+                 if (docSnap.exists()) {
+                     const data = docSnap.data();
+                     currentPointsSettings = {
+                         massPoints: data.massPoints || 10,
+                         meetingPoints: data.meetingPoints || 5,
+                     };
+                     console.log("Loaded points settings:", currentPointsSettings);
+                 } else {
+                     // Set initial default settings if the document does not exist
+                     await setDoc(settingsDocRef, currentPointsSettings);
+                     console.log("Initialized default points settings.");
+                 }
+             } catch (error) {
+                 console.error("Error loading points settings:", error);
+                 // Keep default values if loading fails
+             }
+        }
+        
+        /**
+         * Copies the given text to the clipboard.
+         */
+        window.copyToClipboard = function(text, successMessage, errorMessage) {
+            try {
+                // Create a temporary input field
+                const tempInput = document.createElement('textarea');
+                tempInput.value = text;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempInput);
+                showModal('نجاح النسخ', successMessage);
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                showModal('خطأ في النسخ', errorMessage || 'فشل نسخ الرابط. يرجى محاولة النسخ يدوياً.');
+            }
+        }
 
         /**
          * Handles admin logout (now just navigating home and clearing name).
          */
         window.handleLogout = function() {
-            // Since we rely on Anonymous auth, we only clear the Khadem name
+            // Clear Khadem name from global state and local storage
             khademName = null;
+            localStorage.removeItem('khademName');
             navigate('home');
             showModal('تسجيل الخروج', 'تم تسجيل خروجك من وضع "الخادم" بنجاح. يمكنك الآن الدخول لتسجيل الحضور.');
         }
@@ -275,6 +346,30 @@
             const day = String(date.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
         }
+        
+        /**
+         * Formats Firestore timestamp or date string into a readable format.
+         * @param {string|number} timestampOrDate The date string (YYYY-MM-DD) or a timestamp (ms).
+         * @returns {string} Formatted date string (DD/MM/YYYY).
+         */
+        function formatReadableDate(timestampOrDate) {
+            let date;
+            if (typeof timestampOrDate === 'number') {
+                date = new Date(timestampOrDate);
+            } else if (typeof timestampOrDate === 'string' && timestampOrDate.includes('-')) {
+                // If it's YYYY-MM-DD
+                const parts = timestampOrDate.split('-');
+                date = new Date(parts[0], parts[1] - 1, parts[2]);
+            } else {
+                return 'غير متاح';
+            }
+            // Use native Arabic formatting if possible, or fallback to DD/MM/YYYY
+            if (!isNaN(date)) {
+                 return new Intl.DateTimeFormat('ar-EG', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+            }
+            return 'تاريخ غير صالح';
+        }
+
 
         /**
          * Shows a custom modal dialog (replaces alert()).
@@ -296,381 +391,274 @@
             document.getElementById('modal-backdrop').classList.add('hidden');
         }
 
-        // --- Rendering Functions (Moved to top for ReferenceError fix) ---
+        // --- Rendering Functions ---
 
         /**
          * Renders the new home view with Khadem/Makhdoum choice.
          */
         function renderHomeView(container) {
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
-                    <h2 class="text-3xl font-bold mb-8 text-custom-purple text-center">أهلاً بك في خدمة المتابعة</h2>
-                    
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                        <!-- Khadem/Scan Button -->
-                        <button onclick="navigate('admin_scan')" class="large-home-btn border-custom-purple hover:bg-custom-purple hover:text-white transition duration-200 rounded-xl">
-                            <span class="text-4xl mb-2">🧑‍💻</span>
-                            <span class="text-xl font-bold">هل أنت خادم؟</span>
-                            <span class="text-sm mt-1">(لتسجيل الحضور عبر مسح الكود)</span>
-                        </button>
-                        
-                        <!-- Makhdoum Button - Now navigates to options -->
-                        <button onclick="navigate('makhdoum_options')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
-                            <span class="text-4xl mb-2">👦👧</span>
-                            <span class="text-xl font-bold">هل أنت مخدوم؟</span>
-                            <span class="text-sm mt-1">(للتسجيل وعرض السجل)</span>
-                        </button>
-                    </div>
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                     <h2 class="text-3xl font-bold mb-8 text-custom-purple text-center">أهلاً بك في خدمة المتابعة</h2>
+                     
+                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                         <!-- Khadem/Dashboard Button -->
+                         <button onclick="navigate('admin_dashboard')" class="large-home-btn border-custom-purple hover:bg-custom-purple hover:text-white transition duration-200 rounded-xl">
+                             <span class="text-4xl mb-2">🧑‍💻</span>
+                             <span class="text-xl font-bold">هل أنت خادم؟</span>
+                             <span class="text-sm mt-1">(للدخول إلى لوحة المتابعة)</span>
+                         </button>
+                         
+                         <!-- Makhdoum Button - Now navigates to options -->
+                         <button onclick="navigate('makhdoum_options')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
+                             <span class="text-4xl mb-2">👦👧</span>
+                             <span class="text-xl font-bold">هل أنت مخدوم؟</span>
+                             <span class="text-sm mt-1">(للتسجيل وعرض السجل)</span>
+                         </button>
+                     </div>
 
-                </div>
-            `;
+                 </div>
+             `;
         }
         
         /**
          * Renders the options view for a Makhdoum (New Registration or Find Code).
          */
         function renderMakhdoumOptionsView(container) {
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
-                    <h2 class="text-3xl font-bold mb-8 text-green-500 text-center">خيارات المخدوم</h2>
-                    
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                        <!-- New Registration -->
-                        <button onclick="navigate('register')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
-                            <span class="text-4xl mb-2">📝</span>
-                            <span class="text-xl font-bold">تسجيل جديد</span>
-                            <span class="text-sm mt-1">(لأول مرة)</span>
-                        </button>
-                        
-                        <!-- Find Code (New Search View) -->
-                        <button onclick="navigate('find_code_search')" class="large-home-btn border-blue-500 hover:bg-blue-500 hover:text-white transition duration-200 rounded-xl">
-                            <span class="text-4xl mb-2">🔍</span>
-                            <span class="text-xl font-bold">نسيت الكود / ضاع مني</span>
-                            <span class="text-sm mt-1">(للبحث باسمك)</span>
-                        </button>
-                    </div>
-                    
-                    <div class="mt-8 text-center">
-                        <button onclick="navigate('home')" class="text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
-                    </div>
-                </div>
-            `;
-        }
-        
-        /**
-         * Renders the view for searching for a lost code/ID by name.
-         */
-        function renderFindCodeSearchView(container) {
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
-                    <h2 class="text-2xl font-bold mb-6 text-blue-500 border-b pb-2">البحث عن كود التسجيل (ID)</h2>
-                    <p class="mb-4 text-gray-700">أدخل اسمك بالكامل للبحث عن كود التسجيل الخاص بك وعرضه كـ QR Code.</p>
-                    <form onsubmit="event.preventDefault(); handleFindCodeSearch()" class="space-y-4">
-                        <div>
-                            <label for="find-code-name-input" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
-                            <input type="text" id="find-code-name-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="كما تم تسجيله في المرة الأولى">
-                        </div>
-                        <button type="submit" id="find-code-btn" class="w-full primary-btn bg-blue-500 text-white rounded-lg hover:bg-blue-600">بحث وعرض الكود</button>
-                    </form>
-                    
-                    <div id="find-code-result" class="mt-6 p-4 border-l-4 border-blue-500 bg-blue-50 rounded-lg hidden text-center">
-                         <p class="font-bold text-blue-700 mb-2">تم العثور على الكود! 🎉</p>
-                         <p class="text-gray-700 mb-4">هذا هو الـ QR Code الخاص بك:</p>
-                         <div id="found-qr-code-area" class="text-center p-4 border-4 border-gray-200 rounded-lg">
-                             <!-- QR Code will be generated here -->
-                         </div>
-                         <p class="mt-4 text-sm text-gray-500">احفظ هذا الكود لتسجيل حضورك في المرات القادمة.</p>
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                     <h2 class="text-3xl font-bold mb-8 text-green-500 text-center">خيارات المخدوم</h2>
+                     
+                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-6"> <!-- Changed to 3 columns for better layout -->
+                         <!-- New Registration -->
+                         <button onclick="navigate('register')" class="large-home-btn border-green-500 hover:bg-green-500 hover:text-white transition duration-200 rounded-xl">
+                             <span class="text-4xl mb-2">📝</span>
+                             <span class="text-xl font-bold">تسجيل جديد</span>
+                             <span class="text-sm mt-1">(لأول مرة)</span>
+                         </button>
+                         
+                         <!-- Find Code (New Search View) -->
+                         <button onclick="navigate('find_code_search')" class="large-home-btn border-blue-500 hover:bg-blue-500 hover:text-white transition duration-200 rounded-xl">
+                             <span class="text-4xl mb-2">🔍</span>
+                             <span class="text-xl font-bold">نسيت الكود / ضاع مني</span>
+                             <span class="text-sm mt-1">(للبحث باسمك)</span>
+                         </button>
+                         <!-- Check History -->
+                          <button onclick="navigate('history_search')" class="large-home-btn border-indigo-500 hover:bg-indigo-500 hover:text-white transition duration-200 rounded-xl">
+                              <span class="text-4xl mb-2">📈</span>
+                              <span class="text-xl font-bold">عرض سجل حضوري</span>
+                              <span class="text-sm mt-1">(تحتاج كودك الخاص)</span>
+                          </button>
                      </div>
-                     <button onclick="navigate('makhdoum_options')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للخيارات</button>
-                </div>
-            `;
+                     
+                     <div class="mt-8 text-center">
+                         <button onclick="navigate('home')" class="text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
+                     </div>
+                 </div>
+             `;
         }
 
-        /**
-         * Renders the Khadem Registration Form (NOW REDUNDANT).
-         */
-        function renderAdminRegisterView(container) {
-             container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto text-center">
-                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">إنشاء حساب مخدوم جديد</h2>
-                    <p class="mb-4 text-gray-700">هذه الصفحة تم دمجها مع استمارة التسجيل العادية.</p>
-                    <button onclick="navigate('register')" class="w-full primary-btn bg-custom-purple text-white rounded-lg hover:bg-purple-700">الذهاب للتسجيل</button>
-                    <button onclick="navigate('home')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
-                </div>
-            `;
-        }
-
-        /**
-         * Renders the Admin Login Form (NOW REDUNDANT).
-         */
-        function renderAdminLoginView(container) {
-             container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto text-center">
-                    <h2 class="text-2xl font-bold mb-6 text-red-500 border-b pb-2">🔒 تسجيل دخول الخادم</h2>
-                    <p class="mb-4 text-gray-700">تم دمج هذه الخطوة مع مسح الكود لزيادة السرعة.</p>
-                    <button onclick="navigate('admin_scan')" class="w-full primary-btn bg-red-500 text-white rounded-lg hover:bg-red-600">الذهاب لمسح الكود</button>
-                    <button onclick="navigate('home')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
-                </div>
-            `;
-        }
-        
         /**
          * Renders the registration form.
          */
         function renderRegisterView(container) {
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
-                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">استمارة تسجيل الحضور</h2>
-                    <form id="registration-form" class="space-y-4">
-                        <div>
-                            <label for="name" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
-                            <input type="text" id="name" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
-                        </div>
-                        <div>
-                            <label for="grade" class="block text-sm font-medium text-gray-700 mb-1">الصف/الخدمة:</label>
-                            <input type="text" id="grade" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
-                        </div>
-                        <div>
-                            <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف (للتواصل):</label>
-                            <input type="tel" id="phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
-                        </div>
-                        <button type="submit" class="w-full primary-btn bg-custom-purple text-white rounded-lg hover:bg-purple-700">تسجيل وحفظ</button>
-                    </form>
-                    
-                    <div id="registration-result" class="mt-6 p-4 border-l-4 border-green-500 bg-green-50 rounded-lg hidden">
-                        <p class="font-bold text-green-700 mb-2">تم التسجيل بنجاح! 🎉</p>
-                        <p class="text-gray-700 mb-4">هذا هو الكود الخاص بك (الـ QR Code):</p>
-                        <div id="qr-code-area" class="text-center p-4 border-4 border-gray-200 rounded-lg">
-                            <!-- QR Code will be generated here -->
-                        </div>
-                        <p class="mt-4 text-sm text-center text-gray-500">احفظ هذا الـ QR Code لكي يتم مسحه لتسجيل حضورك.</p>
-                        <button onclick="navigate('home')" class="mt-4 w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">العودة للصفحة الرئيسية</button>
-                    </div>
-                </div>
-            `;
-            document.getElementById('registration-form').onsubmit = handleRegistration;
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                     <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">استمارة تسجيل الحضور</h2>
+                     <form id="registration-form" class="space-y-4">
+                         <div>
+                             <label for="name" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
+                             <input type="text" id="name" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                         </div>
+                         <div>
+                             <label for="grade" class="block text-sm font-medium text-gray-700 mb-1">الصف/الخدمة:</label>
+                             <input type="text" id="grade" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                         </div>
+                         <div>
+                             <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف (للتواصل):</label>
+                             <input type="tel" id="phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                         </div>
+                          <!-- NEW: Parent Phone Field -->
+                          <div>
+                             <label for="parent-phone" class="block text-sm font-medium text-gray-700 mb-1">رقم هاتف ولي الأمر (اختياري):</label>
+                             <input type="tel" id="parent-phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                          </div>
+                          <!-- NEW: Address Field -->
+                          <div>
+                             <label for="address" class="block text-sm font-medium text-gray-700 mb-1">العنوان (اختياري):</label>
+                             <input type="text" id="address" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                          </div>
+                          <!-- Photo Upload Field -->
+                          <div class="border p-4 rounded-lg bg-gray-50">
+                             <label for="photo-file" class="block text-sm font-medium text-gray-700 mb-2">صورة المخدوم (اختياري، يفضل صورة شخصية صغيرة):</label>
+                             <input type="file" id="photo-file" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-custom-purple file:text-white hover:file:bg-purple-700">
+                             <div id="photo-preview-container" class="mt-3 text-center">
+                                 <div id="photo-preview" class="w-20 h-20 bg-gray-200 rounded-full mx-auto hidden border-2 border-custom-purple" style="background-size: cover; background-position: center;"></div>
+                                 <p id="photo-error-message" class="text-xs text-red-500 mt-1 hidden"></p>
+                             </div>
+                          </div>
+                          <!-- NEW: Birthdate field (Mandatory) -->
+                          <div>
+                              <label for="birthdate" class="block text-sm font-medium text-gray-700 mb-1">تاريخ الميلاد:</label>
+                              <input type="date" id="birthdate" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                          </div>
+                         <button type="submit" class="w-full primary-btn bg-custom-purple text-white rounded-lg hover:bg-purple-700">تسجيل وحفظ</button>
+                     </form>
+                     
+                     <div id="registration-result" class="mt-6 p-4 border-l-4 border-green-500 bg-green-50 rounded-lg hidden">
+                         <p class="font-bold text-green-700 mb-2">تم التسجيل بنجاح! 🎉</p>
+                         <p class="text-gray-700 mb-4">هذا هو الكود الخاص بك (الـ QR Code):</p>
+                         <div id="qr-code-area" class="text-center p-4 border-4 border-gray-200 rounded-lg">
+                             <!-- QR Code will be generated here -->
+                         </div>
+                         <p class="mt-4 text-sm text-center text-gray-500">احفظ هذا الـ QR Code لكي يتم مسحه لتسجيل حضورك.</p>
+                         
+                         <div class="flex flex-col sm:flex-row gap-2 mt-4">
+                             <!-- Download Image Button -->
+                             <button id="download-qr-btn" onclick="downloadQrCodeImage()" class="w-full primary-btn bg-red-600 text-white rounded-lg hover:bg-red-700 text-lg">
+                                 🖼️ تحميل صورة الكارنيه (مهم!)
+                             </button>
+                         </div>
+                         <button id="copy-qr-link-btn" onclick="copyRegistrationLink()" class="w-full primary-btn bg-custom-purple text-white rounded-lg hover:bg-purple-700 text-sm mt-2">
+                             🔗 نسخ رابط كود التسجيل
+                         </button>
+                         <button onclick="navigate('home')" class="mt-4 w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">العودة للصفحة الرئيسية</button>
+                     </div>
+                 </div>
+             `;
+             document.getElementById('registration-form').onsubmit = handleRegistration;
+             // Add listener for file change to preview the image
+             document.getElementById('photo-file').addEventListener('change', previewPhoto);
         }
-
+        
         /**
-         * Renders the admin (QR scanning simulator) view.
+         * Renders the Khadem Admin Dashboard showing all children data.
          */
-        function renderAdminScanView(container) {
-            // If Khadem name is already set, skip manual scan simulation and go to children list
-            if (khademName) {
-                 navigate('children_list');
+        function renderAdminDashboardView(container) {
+             // CHECK: Redirect to verification if Khadem name is not set
+             if (!khademName) {
+                 currentPage = 'admin_dashboard'; // Set current page so verification can redirect back here
+                 renderAttendanceVerificationView(container, null);
                  return;
-            }
+             }
 
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
-                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">صفحة الخادم (محاكاة المسح)</h2>
-                    <p class="mb-4 text-gray-700">هذه الصفحة تحاكي مسح الـ QR Code الخاص بالمخدوم.</p>
-                    <form id="admin-scan-form" class="space-y-4">
-                        <div>
-                            <label for="child-id-input" class="block text-sm font-medium text-gray-700 mb-1">كود الولد (Child ID):</label>
-                            <input type="text" id="child-id-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="الصقهنا أو أدخله يدوياً">
-                        </div>
-                        <button type="submit" class="w-full primary-btn bg-blue-500 text-white rounded-lg hover:bg-blue-600">فتح ملف المتابعة</button>
-                    </form>
-                    <button onclick="navigate('children_list')" class="mt-4 w-full text-sm text-gray-600 hover:underline">أو اضغط هنا لعرض قائمة المخدومين</button>
-                </div>
-            `;
-            document.getElementById('admin-scan-form').onsubmit = handleAdminScan;
+             if (!isFirebaseActive) {
+                 container.innerHTML = `<p class="text-red-600 text-center mt-8 p-4 bg-white rounded-xl card max-w-2xl mx-auto">⚠️ وضع المحاكاة: لا يمكن عرض البيانات من قاعدة البيانات.</p>`;
+                 return;
+             }
+
+             container.innerHTML = `
+                 <div class="bg-white p-4 sm:p-6 rounded-xl card max-w-full mx-auto">
+                     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b pb-4">
+                         <h2 class="text-2xl font-bold text-custom-purple">لوحة تحكم الخادم (${khademName})</h2>
+                         <div class="flex gap-2 mt-3 sm:mt-0">
+                             <button onclick="navigate('children_list')" class="px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition">🔍 بحث سريع</button>
+                             <button onclick="navigate('settings')" class="px-4 py-2 text-sm font-medium rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 transition">⚙️ إعدادات النقاط</button>
+                         </div>
+                     </div>
+                     
+                     <p class="mb-4 text-gray-700">جدول عرض شامل لجميع المخدومين المسجلين في الخدمة (يتم تحديثه لحظياً).</p>
+
+                     <div class="dashboard-table-container">
+                         <table class="dashboard-table w-full border-collapse border border-gray-200 rounded-lg">
+                             <thead>
+                                 <tr class="text-sm text-gray-700">
+                                     <th class="border p-2">#</th>
+                                     <th class="border p-2 text-right">الاسم بالكامل</th>
+                                     <th class="border p-2">الصف</th>
+                                     <th class="border p-2 text-custom-purple">إجمالي النقاط</th>
+                                     <th class="border p-2 text-green-600">مرات القداس</th>
+                                     <th class="border p-2 text-indigo-600">مرات الإجتماع</th>
+                                     <th class="border p-2">تاريخ التسجيل</th>
+                                     <th class="border p-2">الإجراء</th>
+                                 </tr>
+                             </thead>
+                             <tbody id="admin-dashboard-list">
+                                 <!-- Data will be loaded here -->
+                                 <tr><td colspan="8" class="text-center p-4 text-gray-500">جارِ تحميل بيانات المخدومين...</td></tr>
+                             </tbody>
+                         </table>
+                     </div>
+                 </div>
+             `;
+             // Start loading data for the dashboard
+             loadAdminDashboardData();
+        }
+
+
+        /**
+         * Renders the settings view for Khadem to control point values.
+         */
+        function renderSettingsView(container) {
+             if (!khademName) {
+                 renderAttendanceVerificationView(container, null);
+                 return;
+             }
+
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                     <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">⚙️ إعدادات النقاط</h2>
+                     <p class="mb-4 text-gray-700">قم بتحديد قيمة النقاط التي سيتم إضافتها للحضور الجديد.</p>
+                     <form onsubmit="event.preventDefault(); handlePointsSettingsSave(this)" class="space-y-4">
+                         <div>
+                             <label for="mass-points-input" class="block text-sm font-medium text-gray-700 mb-1">نقاط حضور القداس:</label>
+                             <input type="number" id="mass-points-input" min="1" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="مثال: 10">
+                         </div>
+                         <div>
+                             <label for="meeting-points-input" class="block text-sm font-medium text-gray-700 mb-1">نقاط حضور الإجتماع:</label>
+                             <input type="number" id="meeting-points-input" min="1" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="مثال: 5">
+                         </div>
+                         <button type="submit" id="settings-save-btn" class="w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">حفظ الإعدادات</button>
+                     </form>
+                 </div>
+             `;
+             // Load current values into the form
+             document.getElementById('mass-points-input').value = getPointsSettings().massPoints;
+             document.getElementById('meeting-points-input').value = getPointsSettings().meetingPoints;
         }
 
         /**
-         * Renders the verification view for a Khadem to enter a name and password after scanning QR.
-         * This view is triggered when a child ID is present in the URL (QR Scan).
+         * Renders the verification view for a Khadem to enter a name and password after scanning QR or clicking Khadem Login.
          */
         function renderAttendanceVerificationView(container, childId) {
-             // Fetch child name first for friendly display
-             let childName = 'المخدوم';
+             
+             let childName = childId ? 'المخدوم' : 'الخدمة';
              if (isFirebaseActive && childId) {
-                const childDocRef = doc(db, getChildrenCollectionPath(), childId);
-                getDoc(childDocRef).then(snap => {
-                    if (snap.exists()) {
+                 const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+                 getDoc(childDocRef).then(snap => {
+                     if (snap.exists()) {
                          childName = snap.data().name;
-                         document.getElementById('verification-title').innerText = `تسجيل حضور ${childName}`;
-                    }
-                });
+                         // Update the visible title if the element exists
+                         const titleEl = document.getElementById('verification-title');
+                         if (titleEl) titleEl.innerText = `تسجيل حضور ${childName}`;
+                     }
+                 });
              }
 
 
              container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
-                    <h2 id="verification-title" class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">تسجيل حضور المخدوم</h2>
-                    <p class="mb-4 text-gray-700">للتسجيل، يرجى إدخال اسمك وكلمة السر الموحدة للخدمة.</p>
-                    <form onsubmit="event.preventDefault(); handleKhademVerification('${childId}')" class="space-y-4">
-                        <div>
-                            <label for="khadem-name-input" class="block text-sm font-medium text-gray-700 mb-1">اسمك كخادم:</label>
-                            <input type="text" id="khadem-name-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="الاسم بالكامل">
-                        </div>
-                        <div>
-                            <label for="khadem-password-input" class="block text-sm font-medium text-gray-700 mb-1">كلمة السر الموحدة:</label>
-                            <input type="password" id="khadem-password-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" placeholder="كلمة السر">
-                        </div>
-                        <button type="submit" class="w-full primary-btn bg-red-500 text-white rounded-lg hover:bg-red-600">التحقق وتسجيل الحضور</button>
-                    </form>
-                    <button onclick="navigate('home')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
-                </div>
-            `;
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                     <h2 id="verification-title" class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">${childId ? `تسجيل حضور ${childName}` : `تسجيل الدخول كخادم`}</h2>
+                     <p class="mb-4 text-gray-700">للتسجيل/للدخول، يرجى إدخال اسمك وكلمة السر الموحدة للخدمة.</p>
+                     <form onsubmit="event.preventDefault(); handleKhademVerification('${childId}')" class="space-y-4">
+                         <div>
+                             <label for="khadem-name-input" class="block text-sm font-medium text-gray-700 mb-1">اسمك كخادم:</label>
+                             <input type="text" id="khadem-name-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="الاسم بالكامل">
+                         </div>
+                         <div>
+                             <label for="khadem-password-input" class="block text-sm font-medium text-gray-700 mb-1">كلمة السر الموحدة:</label>
+                             <input type="password" id="khadem-password-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" placeholder="كلمة السر">
+                         </div>
+                         <button type="submit" class="w-full primary-btn bg-red-500 text-white rounded-lg hover:bg-red-600">${childId ? 'التحقق وتسجيل الحضور' : 'تسجيل الدخول'}</button>
+                     </form>
+                     <button onclick="navigate('home')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للصفحة الرئيسية</button>
+                 </div>
+             `;
 
-            // Pre-fill name if already known
-            if (khademName) {
+             // Pre-fill name if already known
+             if (khademName) {
                  document.getElementById('khadem-name-input').value = khademName;
-            }
-        }
-        
-        /**
-         * Renders the view for searching and listing children (Admin only).
-         */
-        function renderChildrenListView(container) {
-            // CHECK: Redirect to verification if Khadem name is not set
-            if (!khademName) {
-                // Set current page so verification can redirect back here
-                currentPage = 'children_list'; 
-                renderAttendanceVerificationView(container, null);
-                return;
-            }
-             container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
-                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">🔍 البحث عن مخدوم</h2>
-                    <p class="mb-4 text-gray-700">ابحث باسم المخدوم أو بكوده (ID) لفتح ملف المتابعة الخاص به.</p>
-                    
-                    <form onsubmit="event.preventDefault(); handleSearchChildren()" class="space-y-4 mb-6">
-                        <div class="flex flex-col sm:flex-row gap-2">
-                            <input type="text" id="search-query" required class="flex-grow px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="أدخل اسم الولد أو كوده">
-                            <button type="submit" id="search-btn" class="primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600 w-full sm:w-auto px-6">بحث</button>
-                        </div>
-                    </form>
-
-                    <div id="search-results" class="space-y-3 max-h-96 overflow-y-auto border p-4 rounded-lg bg-gray-50">
-                        <p class="text-gray-500 text-center">نتائج البحث ستظهر هنا...</p>
-                    </div>
-                </div>
-            `;
-        }
-
-        /**
-         * Renders the child's profile view for admin attendance tracking.
-         */
-        function renderProfileView(container, childId) {
-            // CHECK: Redirect to verification if Khadem name is not set
-            if (!khademName) {
-                renderAttendanceVerificationView(container, childId);
-                return;
-            }
-            
-            if (!childId) {
-                container.innerHTML = '<p class="text-red-600 text-center mt-8">خطأ: لم يتم تحديد كود الولد للمتابعة.</p>';
-                return;
-            }
-            
-            if (!isFirebaseActive) {
-                 container.innerHTML = `
-                    <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
-                        <h2 class="text-2xl font-bold mb-4 text-red-500">⚠️ وضع المحاكاة</h2>
-                        <p class="text-gray-700 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض ملف المتابعة أو تسجيل الحضور.</p>
-                        <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لاستخدام وظيفة المتابعة.</p>
-                        <button onclick="navigate('admin_scan')" class="mt-6 primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">العودة لصفحة الإدارة</button>
-                    </div>
-                `;
-                 return;
-            }
-
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
-                    <h2 class="text-2xl font-bold mb-4 text-custom-purple">ملف متابعة: <span id="child-name-display" class="text-gray-800">جاري التحميل...</span></h2>
-                    <p class="text-gray-500 mb-6">الصف/الخدمة: <span id="child-grade-display" class="font-semibold">...</span></p>
-
-                    <h3 class="text-xl font-bold mb-4 border-b pb-2">تسجيل حضور اليوم: ${formatDateToDocId(new Date())}</h3>
-                    <div id="attendance-status" class="mb-6 p-4 rounded-lg bg-gray-100 flex justify-around text-center">
-                        <div>
-                            <p class="font-medium text-gray-700">القداس:</p>
-                            <p id="mass-status" class="text-lg font-bold text-red-500">غير مسجل</p>
-                             <p id="mass-khadem" class="text-xs text-gray-500 mt-1"></p>
-                        </div>
-                        <div>
-                            <p class="font-medium text-gray-700">الإجتماع:</p>
-                            <p id="meeting-status" class="text-lg font-bold text-red-500">غير مسجل</p>
-                             <p id="meeting-khadem" class="text-xs text-gray-500 mt-1"></p>
-                        </div>
-                    </div>
-
-                    <div class="flex flex-col sm:flex-row gap-4 mb-8">
-                       <button onclick="recordAttendance('${childId}', 'mass', this)" class="flex-1 primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600" data-type="mass">✅ تسجيل حضور القداس</button>
-                       <button onclick="recordAttendance('${childId}', 'meeting', this)" class="flex-1 primary-btn bg-indigo-500 text-white rounded-lg hover:bg-indigo-600" data-type="meeting">✅ تسجيل حضور الإجتماع</button>
-                    </div>
-                    
-                    <button onclick="navigate('children_list')" class="mt-4 w-full primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">العودة لقائمة البحث</button>
-
-                    <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-8">سجل الحضور بالتواريخ</h3>
-                    <div id="attendance-history" class="space-y-3 max-h-96 overflow-y-auto">
-                        <p class="text-gray-500">جارِ تحميل السجل...</p>
-                    </div>
-                </div>
-            `;
-            
-            // Start fetching data and listening for changes
-            loadChildProfileAndAttendance(childId);
-        }
-
-        /**
-         * Renders the search view for children to check their own history.
-         */
-        function renderHistorySearchView(container) {
-            container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
-                    <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">عرض سجل الحضور الخاص بي</h2>
-                    <p class="mb-4 text-gray-700">أدخل الكود الخاص بك (ID) لعرض سجل حضورك:</p>
-                    <form id="history-search-form" class="space-y-4">
-                        <div>
-                            <label for="history-id-input" class="block text-sm font-medium text-gray-700 mb-1">كود الولد (Child ID):</label>
-                            <input type="text" id="history-id-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="أدخل كود التسجيل هنا">
-                        </div>
-                        <button type="submit" class="w-full primary-btn bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">عرض السجل</button>
-                    </form>
-                </div>
-            `;
-            document.getElementById('history-search-form').onsubmit = handleHistorySearch;
-        }
-
-        /**
-         * Renders the full attendance history for the child.
-         */
-        function renderChildHistoryView(container, childId) {
-            if (!childId) {
-                container.innerHTML = '<p class="text-red-600 text-center mt-8">خطأ: لم يتم تحديد كود الولد.</p>';
-                return;
-            }
-            
-            if (!isFirebaseActive) {
-                 container.innerHTML = `
-                    <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
-                        <h2 class="text-2xl font-bold mb-4 text-red-500">⚠️ وضع المحاكاة</h2>
-                        <p class="text-gray-700 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض سجل الحضور.</p>
-                        <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لعرض البيانات الحقيقية.</p>
-                         <button onclick="navigate('history_search')" class="mt-6 primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">🔍 بحث عن كود آخر</button>
-                    </div>
-                `;
-                 return;
-            }
-
-             container.innerHTML = `
-                <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
-                    <h2 class="text-2xl font-bold mb-4 text-custom-purple border-b pb-2">سجل حضوري</h2>
-                    <p class="text-gray-600 mb-6">الاسم: <span id="child-history-name" class="font-semibold">جاري التحميل...</span></p>
-
-                    <h3 class="text-xl font-bold mb-4">تفاصيل الحضور</h3>
-                    <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto">
-                        <p class="text-gray-500">جارِ تحميل السجل...</p>
-                    </div>
-                     <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">🔍 بحث عن كود آخر</button>
-                </div>
-            `;
-            
-            // Load and listen for data
-            loadChildHistory(childId);
+             }
         }
 
         // --- Navigation and Main Logic ---
@@ -688,26 +676,32 @@
             
             content.innerHTML = ''; // Clear previous content
 
-            // We hide all admin navigation elements since there is no admin login
-            document.getElementById('logout-button').classList.add('hidden');
+            // Update user status display
             document.getElementById('user-id-display').innerText = khademName ? `خادم: ${khademName}` : `مستخدم عام`;
-            
+             // Show/Hide Khadem Logout button based on state
+            document.getElementById('logout-button').classList.toggle('hidden', !khademName);
+
+
             // 1. Decide which navigation buttons to show
             if (khademName) {
-                // If khademName is set, show Khadem buttons and an option to log out (clear name)
+                 // If khademName is set, show Khadem buttons and an option to log out (clear name)
                 navButtons.innerHTML = `
-                    <button onclick="navigate('children_list')" id="nav-list" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">قائمة المخدومين</button>
-                    <button onclick="navigate('register')" id="nav-register" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">تسجيل مخدوم جديد</button>
-                    <button onclick="handleLogout()" id="nav-logout" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 logout-btn text-white">خروج (مسح الاسم)</button>
+                     <button onclick="navigate('admin_dashboard')" id="nav-dashboard" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">لوحة التحكم</button>
+                     <button onclick="navigate('children_list')" id="nav-list" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">بحث/تسجيل سريع</button>
+                     <button onclick="navigate('register')" id="nav-register" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">تسجيل مخدوم جديد</button>
+                     <button onclick="navigate('settings')" id="nav-settings" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">⚙️ الإعدادات</button>
                 `;
-                navButtons.classList.remove('hidden', 'justify-center');
-                navButtons.classList.add('flex', 'justify-between', 'sm:justify-center');
+                navButtons.classList.remove('hidden');
+                navButtons.classList.add('flex'); // Add flex if not already there
+                
+                // Hide logout button from the list since it's next to the user name
+                document.getElementById('logout-button').classList.remove('hidden'); 
             } else { 
-                // Public access (Makhdoum/Child)
-                navButtons.innerHTML = `
-                    <button onclick="navigate('register')" id="nav-register" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">تسجيل جديد</button>
-                    <button onclick="navigate('makhdoum_options')" id="nav-history" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">خيارات المخدوم</button>
-                `;
+                 // Public access (Makhdoum/Child)
+                 navButtons.innerHTML = `
+                      <button onclick="navigate('home')" id="nav-home" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">الرئيسية</button>
+                      <button onclick="navigate('makhdoum_options')" id="nav-options" class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 bg-gray-200 text-gray-700 hover:bg-custom-purple hover:text-white">خيارات المخدوم</button>
+                 `;
                  navButtons.classList.remove('hidden', 'justify-between');
                  navButtons.classList.add('flex', 'justify-center');
             }
@@ -717,20 +711,17 @@
             let activeNavId = '';
             switch (page) {
                 case 'home':
-                case 'admin_login': // Reusing admin_login button to ask for Khadem Name/Password
                     renderHomeView(content);
+                    activeNavId = 'nav-home';
                     break;
                 case 'makhdoum_options':
                     renderMakhdoumOptionsView(content);
-                    activeNavId = 'nav-history'; // Highlight makhdoum options button
+                    activeNavId = 'nav-options'; 
                     break;
                 case 'find_code_search':
                     renderFindCodeSearchView(content);
-                    activeNavId = 'nav-history';
+                    activeNavId = 'nav-options';
                     break;
-                case 'admin_register': // Registration is now redundant, redirecting
-                    navigate('register');
-                    return;
                 case 'register':
                     renderRegisterView(content);
                     activeNavId = 'nav-register';
@@ -739,27 +730,39 @@
                     renderChildrenListView(content);
                     activeNavId = 'nav-list';
                     break;
+                case 'admin_dashboard': // NEW Dashboard view
+                    renderAdminDashboardView(content);
+                    activeNavId = 'nav-dashboard';
+                    break;
+                case 'settings':
+                    renderSettingsView(content);
+                    activeNavId = 'nav-settings';
+                    break;
                 case 'profile':
-                    // If a child ID is manually navigated to, check if verification is needed
-                    if (!khademName) {
-                         // Go to verification if accessed directly via manual navigation
-                         renderAttendanceVerificationView(content, currentChildId); 
-                         return;
-                    }
                     renderProfileView(content, currentChildId);
                     activeNavId = 'nav-list'; 
                     break;
+                case 'admin_scan': // For direct link simulation
                 case 'history_search':
                     renderHistorySearchView(content);
-                    activeNavId = 'nav-history';
+                    activeNavId = 'nav-options';
                     break;
                 case 'child_history':
                     renderChildHistoryView(content, currentChildId);
-                    activeNavId = 'nav-history';
+                    activeNavId = 'nav-options';
+                    break;
+                default:
+                    renderHomeView(content);
                     break;
             }
 
             // 3. Apply active state styling
+            // Reset styles first
+            document.querySelectorAll('#nav-buttons button').forEach(btn => {
+                btn.classList.remove('bg-custom-purple', 'text-white');
+                btn.classList.add('bg-gray-200', 'text-gray-700');
+            });
+            
             const activeBtn = document.getElementById(activeNavId);
             if (activeBtn) {
                 activeBtn.classList.add('bg-custom-purple', 'text-white');
@@ -768,532 +771,1686 @@
         }
         
         // --- Helper functions (not needing reference fix) ---
-        
+        // ... (copyToClipboard, downloadQrCodeImage, previewPhoto, handlePointsSettingsSave - Remain unchanged or minimally adjusted) ...
+
+        let registrationQrLink = null; // Store the generated link for copying
+
+        /**
+         * Triggers the download of the final canvas as a PNG file.
+         */
+        function triggerDownload(finalCanvas) {
+            const dataURL = finalCanvas.toDataURL("image/png");
+            
+            const a = document.createElement('a');
+            const cleanedName = registrationChildName.replace(/[^a-z0-9\u0600-\u06FF]/gi, '_').toLowerCase(); 
+            a.download = `QR_${cleanedName}_${registrationQrId}.png`;
+            a.href = dataURL;
+
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            showModal('نجاح التحميل', 'تم حفظ صورة الكارنيه المتكاملة على جهازك!');
+        }
+
+        /**
+         * Downloads the QR code image as a PNG file, rendered with the service title, QR, name, and ID.
+         */
+        window.downloadQrCodeImage = function() {
+             if (!registrationQrId || !registrationChildName) {
+                 return showModal('خطأ في التحميل', 'لم يتم العثور على بيانات الكود لتحميل الصورة. الرجاء التأكد من إتمام التسجيل أولاً.');
+             }
+
+             // 1. Get the existing QR Code canvas
+             const qrContainer = document.getElementById('qr-code-area');
+             const qrCanvas = qrContainer.querySelector('canvas');
+
+             if (!qrCanvas) {
+                 return showModal('خطأ فني', 'لم يتم العثور على صورة الكود (Canvas) للتحميل.');
+             }
+
+             // --- 2. Create the combined Canvas for the full card ---
+             
+             const QR_SIZE = 200; // Size of the QR code canvas (fixed from qrcode.js)
+             const INNER_PADDING = 15; // Padding inside the drawing area
+             const CARD_PADDING = 15; // Padding outside the drawing area / inside the frame
+             // NOTE: TEXT_HEIGHT is now calculated dynamically, setting a max card height
+             const BORDER_THICKNESS = 8; // Increased border thickness for better visual
+             const PHOTO_SIZE = 60; // Size for the circular photo
+             const TITLE_HEIGHT = 50; // Estimated height for the wrapped title
+             const MARGIN = 25; // Increased Vertical spacing between elements for more breathing room
+             const ID_HEIGHT = 45; // Estimated height for ID line to ensure it is visible
+             // *** FIX: Increase final padding/height here to prevent cropping ***
+             const EXTRA_BOTTOM_PADDING = 70; // Added 70 pixels extra padding for safety. (FIXED)
+
+             // Calculate card dimensions (increased size for better visual separation)
+             const innerWidth = QR_SIZE + INNER_PADDING * 2;
+             // Total Content Height = Title + Photo + Margin + QR + Margin + Name/ID area
+             const contentHeight = TITLE_HEIGHT + PHOTO_SIZE + MARGIN + QR_SIZE + MARGIN + ID_HEIGHT + EXTRA_BOTTOM_PADDING; 
+             
+             const newCanvasWidth = innerWidth + CARD_PADDING * 2 + BORDER_THICKNESS * 2 + 30; // Added 30 for overall width
+             const newCanvasHeight = contentHeight + CARD_PADDING * 2 + BORDER_THICKNESS * 2; 
+
+             const finalCanvas = document.createElement('canvas');
+             finalCanvas.width = newCanvasWidth;
+             finalCanvas.height = newCanvasHeight;
+             const ctx = finalCanvas.getContext('2d');
+             
+             // --- 3. Draw Outer Frame and Background ---
+             
+             // 3.1 Draw Frame Border (Custom Purple)
+             ctx.fillStyle = BORDER_COLOR;
+             ctx.fillRect(0, 0, newCanvasWidth, newCanvasHeight);
+             
+             // 3.2 Draw Inner Background (White)
+             const innerX = BORDER_THICKNESS;
+             const innerY = BORDER_THICKNESS;
+             const innerW = newCanvasWidth - BORDER_THICKNESS * 2;
+             const innerH = newCanvasHeight - BORDER_THICKNESS * 2;
+             ctx.fillStyle = '#FFFFFF';
+             ctx.fillRect(innerX, innerY, innerW, innerH);
+
+             // --- 4. Draw Content ---
+             
+             const centerX = newCanvasWidth / 2;
+             let currentY = innerY + CARD_PADDING;
+             const contentWidth = innerW - CARD_PADDING * 2;
+
+
+             const drawPhoto = (callback, currentY) => {
+                 if (registrationChildPhotoBase64) {
+                     const img = new Image();
+                     img.onload = function() {
+                         // Position photo centered horizontally relative to content width
+                         const PHOTO_X = (newCanvasWidth - PHOTO_SIZE) / 2;
+                         const PHOTO_Y = currentY + 5; 
+
+                         const radius = PHOTO_SIZE / 2;
+
+                         ctx.save();
+                         ctx.beginPath();
+                         // Create a circular clipping path
+                         ctx.arc(PHOTO_X + radius, PHOTO_Y + radius, radius, 0, Math.PI * 2, true);
+                         ctx.closePath();
+                         ctx.clip();
+
+                         ctx.drawImage(img, PHOTO_X, PHOTO_Y, PHOTO_SIZE, PHOTO_SIZE);
+
+                         ctx.restore();
+                         callback(currentY + PHOTO_SIZE + MARGIN); // Update Y position after photo
+                     };
+                     img.onerror = function() {
+                          console.warn("Failed to load user image for QR card. Drawing card without photo.");
+                          callback(currentY + PHOTO_SIZE + MARGIN); 
+                     };
+                     img.src = registrationChildPhotoBase64;
+                 } else {
+                     callback(currentY + MARGIN); // Just add margin if no photo
+                 }
+             };
+
+             // 4.1 Draw Header Text (Service Title - Centered at the very top)
+             // Start title drawing slightly offset to allow for top padding (currentY)
+             ctx.fillStyle = TITLE_COLOR; // Emerald Green
+             ctx.textAlign = 'center';
+             
+             const titleParts = SERVICE_TITLE.split(' ');
+             let line = '';
+             let yTitle = currentY + 15;
+             const lineHeight = 20;
+
+             ctx.font = 'bold 20px Tahoma, sans-serif'; 
+
+             // Simple wrapping logic for the header
+             for (let i = 0; i < titleParts.length; i++) {
+                 const testLine = line + titleParts[i] + ' ';
+                 const metrics = ctx.measureText(testLine);
+                 const testWidth = metrics.width;
+
+                 if (testWidth > contentWidth && i > 0) {
+                     ctx.fillText(line.trim(), centerX, yTitle);
+                     line = titleParts[i] + ' ';
+                     yTitle += lineHeight;
+                 } else {
+                     line = testLine;
+                 }
+             }
+             ctx.fillText(line.trim(), centerX, yTitle);
+             
+             // Update currentY after title rendering
+             currentY = yTitle + MARGIN; 
+
+
+             const drawContentAfterPhoto = (newY) => {
+                 currentY = newY;
+                 
+                 // 4.3 Draw QR Code (Centered)
+                 const qrX = (newCanvasWidth - QR_SIZE) / 2;
+                 const qrYStart = currentY + INNER_PADDING;
+                 ctx.drawImage(qrCanvas, qrX, qrYStart, QR_SIZE, QR_SIZE);
+                 
+                 // 4.4 Draw Footer Text (Name and ID)
+                 const footerYStart = qrYStart + QR_SIZE + MARGIN;
+                 
+                 // Draw Name
+                 ctx.fillStyle = '#374151'; // Gray-700
+                 ctx.font = 'bold 22px Tahoma, sans-serif'; // Larger font for name
+                 ctx.fillText(registrationChildName, centerX, footerYStart + 10);
+
+                 // Draw ID (moved further down)
+                 ctx.fillStyle = BORDER_COLOR; // Custom Purple
+                 ctx.font = '16px monospace, Tahoma, sans-serif'; // Slightly larger ID font
+                 ctx.fillText(`ID: ${registrationQrId}`, centerX, footerYStart + 35); 
+
+                 // --- 5. Trigger Download ---
+                 triggerDownload(finalCanvas);
+             };
+
+             // 4.2 Start the drawing process: Draw Photo, then the rest
+             // Pass the current Y position (after the title) to start drawing the photo
+             drawPhoto(drawContentAfterPhoto, currentY);
+        }
+
+        /**
+         * Handles local file selection for preview and conversion to Base64.
+         */
+        function previewPhoto(event) {
+             const file = event.target.files[0];
+             const preview = document.getElementById('photo-preview');
+             const errorMessage = document.getElementById('photo-error-message');
+             
+             if (file) {
+                 const reader = new FileReader();
+                 
+                 // Max file size for embedding in Firestore document (around 100KB is safe)
+                 const MAX_SIZE_BYTES = 150 * 1024; // 150 KB
+                 
+                 errorMessage.classList.add('hidden');
+                 
+                 if (file.size > MAX_SIZE_BYTES) {
+                     errorMessage.innerText = '⚠️ حجم الصورة كبير جداً (أقصى حجم 150 كيلوبايت)';
+                     errorMessage.classList.remove('hidden');
+                     preview.classList.add('hidden');
+                     registrationChildPhotoBase64 = null;
+                     event.target.value = ''; // Clear file input
+                     return;
+                 }
+
+                 reader.onload = function(e) {
+                     const base64String = e.target.result;
+                     preview.style.backgroundImage = `url(${base64String})`;
+                     preview.classList.remove('hidden');
+                     // Store the Base64 string for saving to Firestore and drawing on Canvas
+                     registrationChildPhotoBase64 = base64String; 
+                 };
+
+                 reader.onerror = function() {
+                     errorMessage.innerText = 'خطأ في قراءة الملف.';
+                     errorMessage.classList.remove('hidden');
+                     preview.classList.add('hidden');
+                     registrationChildPhotoBase64 = null;
+                 }
+
+                 reader.readAsDataURL(file);
+             } else {
+                 preview.classList.add('hidden');
+                 registrationChildPhotoBase64 = null;
+             }
+        }
+
+        /**
+         * Handles saving the points settings to Firestore.
+         */
+        window.handlePointsSettingsSave = async function(form) {
+             if (!isFirebaseActive) {
+                 return showModal('⚠️ وضع المحاكاة', 'لا يمكن حفظ الإعدادات بدون اتصال بقاعدة بيانات Firebase.');
+             }
+
+             const massPoints = parseInt(document.getElementById('mass-points-input').value, 10);
+             const meetingPoints = parseInt(document.getElementById('meeting-points-input').value, 10);
+             const saveButton = document.getElementById('settings-save-btn');
+
+             if (isNaN(massPoints) || massPoints < 1 || isNaN(meetingPoints) || meetingPoints < 1) {
+                 return showModal('خطأ في الإدخال', 'الرجاء إدخال أرقام صحيحة موجبة (أكبر من 0) لكل من القداس والاجتماع.');
+             }
+
+             saveButton.disabled = true;
+             saveButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الحفظ...';
+
+             try {
+                 const settingsDocRef = doc(db, getSettingsDocPath());
+                 const newSettings = { massPoints, meetingPoints };
+
+                 await setDoc(settingsDocRef, newSettings);
+                 
+                 // Update the global state immediately
+                 currentPointsSettings = newSettings; 
+                 
+                 showModal('نجاح الحفظ', 'تم تحديث إعدادات النقاط بنجاح! سيتم تطبيقها على الحضور الجديد.');
+
+             } catch (error) {
+                 console.error("Error saving points settings:", error);
+                 showModal('خطأ في الحفظ', 'حدث خطأ أثناء حفظ الإعدادات. الرجاء المحاولة مرة أخرى.');
+             } finally {
+                 saveButton.disabled = false;
+                 saveButton.innerText = 'حفظ الإعدادات';
+             }
+        }
+
+
         /**
          * Handles registration form submission and saves data to Firestore.
          */
         async function handleRegistration(e) {
-            e.preventDefault();
-            const name = document.getElementById('name').value.trim();
-            const grade = document.getElementById('grade').value.trim();
-            const phone = document.getElementById('phone').value.trim();
+             e.preventDefault();
+             const name = document.getElementById('name').value.trim();
+             const grade = document.getElementById('grade').value.trim();
+             const phone = document.getElementById('phone').value.trim();
+             const parentPhone = document.getElementById('parent-phone').value.trim(); // NEW
+             const address = document.getElementById('address').value.trim(); // NEW
+             const birthdate = document.getElementById('birthdate').value.trim(); 
+             
+             // Get Base64 string from the global variable updated by previewPhoto
+             const photoBase64 = registrationChildPhotoBase64; 
 
-            const formButton = e.target.querySelector('button[type="submit"]');
-            formButton.disabled = true;
-            formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الحفظ...';
-            
-            let childId;
+             // Store name globally for file download function
+             registrationChildName = name;
 
-            if (!isFirebaseActive) {
-                childId = 'MOCK-ID-' + Math.random().toString(36).substring(2, 9).toUpperCase();
+             const formButton = e.target.querySelector('button[type="submit"]');
+             formButton.disabled = true;
+             formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الحفظ...';
+             
+             let childId;
 
-                showModal('⚠️ وضع المحاكاة', 'لا يمكن حفظ البيانات! يجب تشغيل التطبيق في بيئة Canvas أو إعداد Firebase يدوياً.', `
-                    <p class="text-xs text-red-500 mb-3">
-                        سيتم عرض الـ ID ولكن لن يتم حفظه في قاعدة البيانات.
-                    </p>
-                `);
-            } else {
-                try {
-                    // Add a new document (child) to the 'children' collection
-                    const docRef = await addDoc(collection(db, getChildrenCollectionPath()), {
-                        name,
-                        grade,
-                        phone,
-                        createdAt: new Date().toISOString(),
-                    });
-                    childId = docRef.id;
-                    showModal('نجاح التسجيل', 'تم تسجيل بياناتك بنجاح! احفظ الكود الظاهر لتسجيل الحضور.');
+             if (!isFirebaseActive) {
+                 childId = 'MOCK-ID-' + Math.random().toString(36).substring(2, 9).toUpperCase();
 
-                } catch (error) {
-                    console.error("Error saving child data: ", error);
-                    showModal('خطأ في الحفظ', 'حدث خطأ أثناء حفظ البيانات. الرجاء المحاولة مرة أخرى.');
-                    formButton.disabled = false;
-                    formButton.innerText = 'تسجيل وحفظ';
-                    return;
-                }
-            }
+                 showModal('⚠️ وضع المحاكاة', 'لا يمكن حفظ البيانات! يجب تشغيل التطبيق في بيئة Canvas أو إعداد Firebase يدوياً.', `
+                     <p class="text-xs text-red-500 mb-3">
+                         سيتم عرض الـ ID ولكن لن يتم حفظه في قاعدة البيانات.
+                     </p>
+                 `);
+             } else {
+                 try {
+                     // Add a new document (child) to the 'children' collection
+                     const docRef = await addDoc(collection(db, getChildrenCollectionPath()), {
+                         name,
+                         grade,
+                         phone,
+                         parentPhone, // NEW
+                         address,     // NEW
+                         birthdate, 
+                         photoBase64: photoBase64 || null, // Save photo Base64 string
+                         totalPoints: 0, // Initialize total points
+                         createdAt: new Date().toISOString(), // Use current timestamp for registration date
+                     });
+                     childId = docRef.id;
+                     showModal('نجاح التسجيل', 'تم تسجيل بياناتك بنجاح! احفظ الكود الظاهر لتسجيل الحضور.');
 
-            // Construct the link for the QR code (simulating the scan)
-            const qrLink = `${window.location.origin}${window.location.pathname}?id=${childId}`;
+                 } catch (error) {
+                     console.error("Error saving child data: ", error);
+                     showModal('خطأ في الحفظ', 'حدث خطأ أثناء حفظ البيانات. الرجاء المحاولة مرة أخرى.');
+                     formButton.disabled = false;
+                     formButton.innerText = 'تسجيل وحفظ';
+                     return;
+                 }
+             }
 
-            // Reset QR area and display ID
-            const qrCodeArea = document.getElementById('qr-code-area');
-            qrCodeArea.innerHTML = `
-                <div id="qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
-                <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
-            `;
-            
-            // Generate QR Code locally using qrcode.js
-            new QRCode(document.getElementById("qrcode-canvas"), {
-                text: qrLink,
-                width: 200,
-                height: 200,
-                colorDark : "#6B46C1",
-                colorLight : "#ffffff",
-                correctLevel : QRCode.CorrectLevel.H
-            });
+             // Store ID globally
+             registrationQrId = childId;
+             
+             // Construct the link for the QR code (simulating the scan)
+             registrationQrLink = `${window.location.origin}${window.location.pathname}?id=${childId}`;
+
+             // Reset QR area and display ID
+             const qrCodeArea = document.getElementById('qr-code-area');
+             qrCodeArea.innerHTML = `
+                 <div id="qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
+                 <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
+             `;
+             
+             // Generate QR Code locally using qrcode.js
+             new QRCode(document.getElementById("qrcode-canvas"), {
+                 text: registrationQrLink,
+                 width: 200,
+                 height: 200,
+                 colorDark : "#6B46C1",
+                 colorLight : "#ffffff",
+                 correctLevel : QRCode.CorrectLevel.H
+             });
 
 
-            document.getElementById('registration-form').classList.add('hidden');
-            document.getElementById('registration-result').classList.remove('hidden');
-            
-            formButton.disabled = false;
-            formButton.innerText = 'تسجيل وحفظ';
+             document.getElementById('registration-form').classList.add('hidden');
+             document.getElementById('registration-result').classList.remove('hidden');
+             
+             formButton.disabled = false;
+             formButton.innerText = 'تسجيل وحفظ';
+        }
+        
+        /**
+         * Copies the generated registration link (QR code link) to the clipboard.
+         */
+        window.copyRegistrationLink = function() {
+             if (registrationQrLink) {
+                 copyToClipboard(
+                     registrationQrLink,
+                     'تم نسخ رابط الـ QR بنجاح! يمكنك الآن مشاركته.',
+                     'فشل نسخ الرابط. يرجى إعادة المحاولة.'
+                 );
+             }
+        }
+        
+        let foundQrLink = null; // Store the found link for copying
+
+        /**
+         * Copies the found code link to the clipboard.
+         */
+        window.copyFoundCodeLink = function() {
+             if (foundQrLink) {
+                 copyToClipboard(
+                     foundQrLink,
+                     'تم نسخ رابط الـ QR بنجاح! احفظه لاستخدامه لاحقاً.',
+                     'فشل نسخ الرابط. يرجى إعادة المحاولة.'
+                 );
+             }
         }
 
         /**
          * Handles the search logic for finding an existing code by name.
          */
-        async function handleFindCodeSearch() {
-            if (!isFirebaseActive) {
-                return showModal('⚠️ وضع المحاكاة', 'لا يمكن البحث عن البيانات بدون اتصال بقاعدة بيانات Firebase.');
-            }
+        window.handleFindCodeSearch = async function() { // Added window. to make it global
+             if (!isFirebaseActive) {
+                 return showModal('⚠️ وضع المحاكاة', 'لا يمكن البحث عن البيانات بدون اتصال بقاعدة بيانات Firebase.');
+             }
 
-            // Removed .trim() to be more forgiving in Arabic names
-            const queryName = document.getElementById('find-code-name-input').value; 
-            const trimmedQueryName = queryName.trim(); 
-            const resultDiv = document.getElementById('find-code-result');
-            const searchButton = document.getElementById('find-code-btn');
-            const qrCodeArea = document.getElementById('found-qr-code-area');
+             // Removed .trim() to be more forgiving in Arabic names
+             const queryName = document.getElementById('find-code-name-input').value; 
+             const trimmedQueryName = queryName.trim(); 
+             const resultDiv = document.getElementById('find-code-result');
+             const searchButton = document.getElementById('find-code-btn');
+             const qrCodeArea = document.getElementById('found-qr-code-area');
 
-            if (!trimmedQueryName) {
-                 showModal('خطأ', 'الرجاء إدخال الاسم بالكامل للبحث.');
-                 return;
-            }
+             if (!trimmedQueryName) {
+                  // If validation fails (empty input), return immediately and show modal
+                  showModal('خطأ', 'الرجاء إدخال الاسم بالكامل للبحث.');
+                  return;
+             }
 
-            searchButton.disabled = true;
-            searchButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري البحث...';
-            resultDiv.classList.add('hidden');
-            
-            try {
-                const childrenColRef = collection(db, getChildrenCollectionPath());
-                
-                // 1. Use the Unicode trick to efficiently find documents that START with the query name
-                // Using the untrimmed value in the where clause might sometimes help with weird spaces.
-                const q = query(
-                    childrenColRef, 
-                    where('name', '>=', queryName),
-                    where('name', '<=', queryName + '\uf7ff') 
-                );
-                
-                const querySnapshot = await getDocs(q);
-                let foundDoc = null;
-                
-                // 2. Filter in JavaScript for an EXACT match (case-insensitive and trim spaces)
-                querySnapshot.forEach(docSnap => {
-                    // Normalize both names for comparison
-                    const storedName = docSnap.data().name.trim().toLowerCase();
-                    const enteredName = trimmedQueryName.toLowerCase();
+             // If validation passes, start loading state (this is where the fix prevents it from looking "stuck")
+             searchButton.disabled = true;
+             searchButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري البحث...';
+             resultDiv.classList.add('hidden');
+             
+             try {
+                 const childrenColRef = collection(db, getChildrenCollectionPath());
+                 
+                 // --- FIX: Use Unicode search on a lowercase/normalized name field if available, 
+                 // but since we only have the 'name' field, we rely on the Unicode trick (needs Index) ---
+                 
+                 const q = query(
+                      childrenColRef, 
+                      // Using the untrimmed value in the where clause might sometimes help with weird spaces.
+                      // Note: This requires a composite index on the 'name' field in Firestore
+                      where('name', '>=', queryName),
+                      where('name', '<=', queryName + '\uf7ff') 
+                 );
+                 
+                 const querySnapshot = await getDocs(q);
+                 let foundDoc = null;
+                 
+                 // 2. Filter in JavaScript for an EXACT match (case-insensitive and trim spaces)
+                 querySnapshot.forEach(docSnap => {
+                      // Normalize both names for comparison
+                      const storedName = docSnap.data().name.trim().toLowerCase();
+                      const enteredName = trimmedQueryName.toLowerCase();
 
-                    if (storedName === enteredName) {
-                         foundDoc = docSnap;
-                    }
-                });
+                      if (storedName === enteredName) {
+                           foundDoc = docSnap;
+                      }
+                 });
 
-                
-                if (foundDoc) {
-                    const childId = foundDoc.id;
-                    const qrLink = `${window.location.origin}${window.location.pathname}?id=${childId}`;
+                 
+                 if (foundDoc) {
+                      const childId = foundDoc.id;
+                      foundQrLink = `${window.location.origin}${window.location.pathname}?id=${childId}`;
 
-                    // Update the QR Code area structure
-                    qrCodeArea.innerHTML = `
-                        <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
-                        <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
-                    `;
-                    
-                    // Generate QR Code 
-                    // IMPORTANT: We need to ensure the old canvas is cleared before creating a new one
-                    const existingQrCanvas = document.getElementById("found-qrcode-canvas");
-                    if (existingQrCanvas) {
-                         existingQrCanvas.innerHTML = '';
-                         new QRCode(existingQrCanvas, {
-                             text: qrLink,
-                             width: 200,
-                             height: 200,
-                             colorDark : "#4285F4", // Use blue color for finding code
-                             colorLight : "#ffffff",
-                             correctLevel : QRCode.CorrectLevel.H
-                         });
-                    }
+                      // Update the QR Code area structure
+                      qrCodeArea.innerHTML = `
+                          <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
+                          <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
+                      `;
+                      
+                      // Generate QR Code 
+                      const existingQrCanvas = document.getElementById("found-qrcode-canvas");
+                      if (existingQrCanvas) {
+                           existingQrCanvas.innerHTML = '';
+                           new QRCode(existingQrCanvas, {
+                                 text: foundQrLink,
+                                 width: 200,
+                                 height: 200,
+                                 colorDark : "#4285F4", // Use blue color for finding code
+                                 colorLight : "#ffffff",
+                                 correctLevel : QRCode.CorrectLevel.H
+                           });
+                      }
 
 
-                    resultDiv.classList.remove('hidden');
-                    document.querySelector('#find-code-result .font-bold').innerText = `تم العثور على الكود للاسم: ${foundDoc.data().name} 🎉`;
+                      resultDiv.classList.remove('hidden');
+                      document.querySelector('#find-code-result .font-bold').innerText = `تم العثور على الكود للاسم: ${foundDoc.data().name} 🎉`;
 
-                } else {
-                    showModal('⚠️ لم يتم العثور على الكود', 'لم يتم العثور على كود تسجيل بالاسم المدخل. يرجى التأكد من كتابة الاسم بالكامل كما سجلته في المرة الأولى.');
-                }
-            } catch (error) {
-                console.error("Error finding code by name:", error);
-                showModal('خطأ في الاتصال', 'حدث خطأ أثناء البحث عن الكود. يرجى المحاولة مرة أخرى.');
-            } finally {
-                searchButton.disabled = false;
-                searchButton.innerHTML = 'بحث وعرض الكود';
-            }
+                 } else {
+                      showModal('⚠️ لم يتم العثور على الكود', 'لم يتم العثور على كود تسجيل بالاسم المدخل. يرجى التأكد من كتابة الاسم بالكامل كما سجلته في المرة الأولى.');
+                 }
+             } catch (error) {
+                 console.error("Error finding code by name:", error);
+                 // Check for Index Missing error message structure
+                 if (error.message.includes('The query requires an index')) {
+                     showModal('خطأ: مطلوب فهرس (Index)', `للبحث بالاسم، يجب عليك إنشاء فهرس (Index) في قاعدة بيانات Firestore. <br><br>الرجاء فتح الـ <strong>Console (F12)</strong> واتباع الرابط الظاهر هناك لإنشاء الفهرس المطلوب.`);
+                 } else {
+                     showModal('خطأ في الاتصال', 'حدث خطأ أثناء البحث عن الكود. يرجى المحاولة مرة أخرى.');
+                 }
+             } finally {
+                 searchButton.disabled = false;
+                 searchButton.innerHTML = 'بحث وعرض الكود';
+             }
         }
 
-        /**
-         * Handles manual ID input (simulating QR scan).
-         */
-        async function handleAdminScan(e) {
-            e.preventDefault();
-            const id = document.getElementById('child-id-input').value.trim();
-            
-            if (!isFirebaseActive) {
-                showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.');
-                 return;
-            }
-
-            if (id) {
-                 // Check if the ID is valid before navigating
-                const docRef = doc(db, getChildrenCollectionPath(), id);
-                const docSnap = await getDoc(docRef);
-
-                if (docSnap.exists()) {
-                     // Navigate to the verification step
-                    const newUrl = `${window.location.origin}${window.location.pathname}?id=${id}`;
-                    window.history.pushState({ id: id }, `Verification for ${id}`, newUrl);
-                    renderAttendanceVerificationView(document.getElementById('view-content'), id);
-                } else {
-                    showModal('كود غير صحيح', 'لم يتم العثور على ولد بهذا الكود (ID). تأكد من الكود المدخل.');
-                }
-            }
-        }
 
         /**
          * Handles the Khadem name and password verification.
          */
         window.handleKhademVerification = function(childId) {
-            const name = document.getElementById('khadem-name-input').value.trim();
-            const password = document.getElementById('khadem-password-input').value.trim();
+             const name = document.getElementById('khadem-name-input').value.trim();
+             const password = document.getElementById('khadem-password-input').value.trim();
+             const targetPage = currentPage; // Get the page requested before verification
 
-            if (password !== ADMIN_PASSWORD) {
-                return showModal('خطأ في التحقق', 'كلمة السر غير صحيحة. الرجاء المحاولة مرة أخرى.');
-            }
+             if (password !== ADMIN_PASSWORD) {
+                 return showModal('خطأ في التحقق', 'كلمة السر غير صحيحة. الرجاء المحاولة مرة أخرى.');
+             }
 
-            if (!name) {
-                return showModal('خطأ', 'الرجاء إدخال اسمك كخادم أولاً.');
-            }
+             if (!name) {
+                 return showModal('خطأ', 'الرجاء إدخال اسمك كخادم أولاً.');
+             }
 
-            // Save Khadem name globally and proceed
-            khademName = name;
-            showModal('نجاح التحقق', `أهلاً بك يا ${khademName}! جارِ فتح ملف المتابعة.`);
-            document.getElementById('user-id-display').innerText = `خادم: ${khademName}`;
-            
-            if (childId && childId !== 'null') { // check if a specific child was scanned
-                 // Navigate to the profile view using the verified Khadem Name
-                navigate('profile', childId);
-            } else {
-                 // If no child was scanned, go to the children list (default admin landing)
-                 navigate('children_list');
-            }
+             // Save Khadem name globally and to local storage
+             khademName = name;
+             localStorage.setItem('khademName', name); // Save to local storage for persistence
+             showModal('نجاح التحقق', `أهلاً بك يا ${khademName}! جارِ فتح ملف المتابعة.`);
+             document.getElementById('user-id-display').innerText = `خادم: ${khademName}`;
+             
+             if (childId && childId !== 'null') { // check if a specific child was scanned
+                  // Navigate to the profile view using the verified Khadem Name
+                 navigate('profile', childId);
+             } else {
+                  // If no child was scanned, navigate to the target page (dashboard is the default admin landing)
+                 if (targetPage === 'admin_dashboard') {
+                      navigate('admin_dashboard');
+                 } else if (targetPage === 'children_list') {
+                      navigate('children_list');
+                 } else {
+                      // Default to dashboard if we weren't trying to go to list
+                      navigate('admin_dashboard'); 
+                 }
+             }
         }
 
         /**
-         * Handles the search logic for children documents.
+         * Handles the search logic for children documents (Admin Quick Search View).
          */
         window.handleSearchChildren = async function() {
-            if (!isFirebaseActive) {
-                return showModal('⚠️ وضع المحاكاة', 'لا يمكن البحث عن البيانات بدون اتصال بقاعدة بيانات Firebase.');
-            }
+             if (!isFirebaseActive) {
+                 return showModal('⚠️ وضع المحاكاة', 'لا يمكن البحث عن البيانات بدون اتصال بقاعدة بيانات Firebase.');
+             }
 
-            const queryText = document.getElementById('search-query').value.trim();
-            const resultsContainer = document.getElementById('search-results');
-            const searchButton = document.getElementById('search-btn');
+             const queryText = document.getElementById('search-query').value.trim();
+             const resultsContainer = document.getElementById('search-results');
+             const searchButton = document.getElementById('search-btn');
 
-            if (!queryText) {
-                resultsContainer.innerHTML = '<p class="text-red-500 text-center">الرجاء إدخال اسم أو كود للبحث.</p>';
-                return;
-            }
+             if (!queryText) {
+                 resultsContainer.innerHTML = '<p class="text-red-500 text-center">الرجاء إدخال اسم أو كود للبحث.</p>';
+                 return;
+             }
 
-            resultsContainer.innerHTML = '<p class="text-gray-500 text-center"><div class="animate-spin inline-block w-4 h-4 border-2 border-t-2 border-custom-purple border-t-transparent rounded-full mr-2"></div> جاري البحث...</p>';
-            searchButton.disabled = true;
+             resultsContainer.innerHTML = '<p class="text-gray-500 text-center"><div class="animate-spin inline-block w-4 h-4 border-2 border-t-2 border-custom-purple border-t-transparent rounded-full mr-2"></div> جاري البحث...</p>';
+             searchButton.disabled = true;
 
-            try {
-                const childrenColRef = collection(db, getChildrenCollectionPath());
-                let docs = [];
+             try {
+                 const childrenColRef = collection(db, getChildrenCollectionPath());
+                 let docs = [];
 
-                // 1. Check if the query is a potential ID (Firestore ID is usually alphanumeric)
-                if (queryText.length > 5 && /^[a-zA-Z0-9]+$/.test(queryText)) {
-                    // Try to get by ID directly (most efficient)
-                    const docRef = doc(db, getChildrenCollectionPath(), queryText);
-                    const docSnap = await getDoc(docRef);
-                    if (docSnap.exists()) {
-                        docs.push({ id: docSnap.id, ...docSnap.data() });
-                    }
-                }
+                 // 1. Check if the query is a potential ID (Firestore ID is usually alphanumeric)
+                 if (queryText.length > 5 && /^[a-zA-Z0-9]+$/.test(queryText)) {
+                      // Try to get by ID directly (most efficient)
+                     const docRef = doc(db, getChildrenCollectionPath(), queryText);
+                     const docSnap = await getDoc(docRef);
+                     if (docSnap.exists()) {
+                          docs.push({ id: docSnap.id, ...docSnap.data() });
+                     }
+                 }
 
-                // 2. Search by Name (using Firestore query logic for partial match starting)
-                // We use Unicode trick for "starts with"
-                if (docs.length === 0 || !docs.some(d => d.name.toLowerCase().includes(queryText.toLowerCase()))) {
-                    const q = query(
-                        childrenColRef, 
-                        where('name', '>=', queryText),
-                        where('name', '<=', queryText + '\uf7ff') 
-                    );
-                    
-                    const querySnapshot = await getDocs(q);
-                    querySnapshot.forEach(docSnap => {
-                         // Only add if not already added by ID search and name starts with query
-                        if (!docs.some(d => d.id === docSnap.id) && docSnap.data().name.toLowerCase().startsWith(queryText.toLowerCase())) {
-                             docs.push({ id: docSnap.id, ...docSnap.data() });
-                        }
-                    });
-                }
+                 // 2. Search by Name (using Firestore query logic for partial match starting)
+                 // We use Unicode trick for "starts with"
+                 if (docs.length === 0 || !docs.some(d => d.name.toLowerCase().includes(queryText.toLowerCase()))) {
+                     const q = query(
+                          childrenColRef, 
+                          where('name', '>=', queryText),
+                          where('name', '<=', queryText + '\uf7ff') 
+                     );
+                     
+                     const querySnapshot = await getDocs(q);
+                     querySnapshot.forEach(docSnap => {
+                           // Only add if not already added by ID search and name starts with query
+                          if (!docs.some(d => d.id === docSnap.id)) {
+                               docs.push({ id: doc.id, ...doc.data() });
+                          }
+                     });
+                 }
+
+                 // Remove duplicates based on ID (important if both ID and Name searches found the same doc)
+                 const uniqueDocs = Array.from(new Map(docs.map(item => [item.id, item])).values());
 
 
-                if (docs.length === 0) {
-                    resultsContainer.innerHTML = '<p class="text-red-500 text-center">⚠️ لم يتم العثور على أي مخدومين بالاسم أو الكود المدخل.</p>';
-                } else {
-                    resultsContainer.innerHTML = docs.map(child => `
-                        <div onclick="navigate('profile', '${child.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg bg-white hover:bg-blue-50 cursor-pointer border-b border-gray-100 transition duration-150">
-                            <div class="flex-grow">
-                                <span class="font-bold text-lg text-gray-800">${child.name}</span>
-                                <span class="text-sm text-gray-500 block sm:inline-block sm:mr-4">(${child.grade})</span>
-                            </div>
-                            <span class="text-xs font-mono text-custom-purple mt-1 sm:mt-0">ID: ${child.id}</span>
-                        </div>
-                    `).join('');
-                }
+                 if (uniqueDocs.length === 0) {
+                     resultsContainer.innerHTML = '<p class="text-red-500 text-center">⚠️ لم يتم العثور على أي مخدومين بالاسم أو الكود المدخل.</p>';
+                 } else {
+                     resultsContainer.innerHTML = uniqueDocs.map(child => {
+                          // Photo HTML generation for search results
+                          const photoHtml = child.photoBase64 
+                               ? `<img src="${child.photoBase64}" class="w-10 h-10 rounded-full border-2 border-custom-purple ml-3 object-cover flex-shrink-0" alt="صورة المخدوم">`
+                               : `<div class="w-10 h-10 rounded-full border-2 border-gray-300 ml-3 bg-gray-200 flex items-center justify-center text-gray-500 font-bold text-sm flex-shrink-0">👤</div>`;
 
-            } catch (error) {
-                console.error("Error searching children:", error);
-                resultsContainer.innerHTML = '<p class="text-red-600 text-center">خطأ في البحث: الرجاء مراجعة الـ Console.</p>';
-            } finally {
-                searchButton.disabled = false;
-                searchButton.innerText = 'بحث';
-            }
+                          return `
+                          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg bg-white hover:bg-gray-50 border-b border-gray-100 transition duration-150 group">
+                              
+                              <!-- Clickable Area for Profile (Photo + Details) -->
+                              <div onclick="navigate('profile', '${child.id}')" class="flex items-center flex-grow min-w-0 cursor-pointer">
+                                  ${photoHtml}
+                                  <div>
+                                      <span class="font-bold text-lg text-gray-800">${child.name}</span>
+                                      <span class="text-sm text-gray-500 block sm:inline-block sm:mr-4">(${child.grade})</span>
+                                      <span class="text-xs font-mono text-custom-purple block mt-1 sm:mt-0">ID: ${child.id}</span>
+                                  </div>
+                              </div>
+
+                              <!-- Action Buttons Area -->
+                              <div class="flex flex-col sm:flex-row gap-2 mt-2 sm:mt-0 flex-shrink-0">
+                                  <button onclick="quickRecordAttendance('${child.id}', 'mass', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-green-500 text-white hover:bg-green-600 transition" data-type="mass">
+                                      ✅ قداس
+                                  </button>
+                                  <button onclick="quickRecordAttendance('${child.id}', 'meeting', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition" data-type="meeting">
+                                      ✅ إجتماع
+                                  </button>
+                                  <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-full bg-blue-500 text-white hover:bg-blue-600 transition">
+                                      📂 فتح الملف
+                                  </button>
+                              </div>
+                          </div>
+                          `;
+                     }).join('');
+                 }
+
+             } catch (error) {
+                 console.error("Error searching children:", error);
+                 resultsContainer.innerHTML = '<p class="text-red-600 text-center">خطأ في البحث: الرجاء مراجعة الـ Console.</p>';
+             } finally {
+                 searchButton.disabled = false;
+                 searchButton.innerText = 'بحث';
+             }
         }
+        
+         /**
+          * Quick attendance recording from the list view.
+          */
+         window.quickRecordAttendance = async function(childId, type, button) {
+              if (!khademName) {
+                  return showModal('صلاحيات مطلوبة', 'الرجاء إدخال اسمك وكلمة السر الموحدة للخدمة أولاً لتسجيل الحضور.');
+              }
+              
+              // Get the parent container to show the status quickly
+              const parentDiv = button.closest('.flex-col');
+              
+              const originalText = button.innerHTML;
+              button.disabled = true;
+              button.innerHTML = '...';
+              
+              try {
+                  // Pass the calculated points based on type
+                  const points = type === 'mass' ? getPointsSettings().massPoints : getPointsSettings().meetingPoints;
+                  await recordAttendance(childId, type, button, points);
+                  
+                  // Show temporary success feedback in the list item
+                  const successMsg = document.createElement('span');
+                  successMsg.className = 'text-xs text-green-600 bg-green-100 p-1 rounded';
+                  successMsg.innerText = `تم تسجيل ${type === 'mass' ? 'القداس' : 'الإجتماع'}! (+${points} نقطة)`;
+                  
+                  // Find the quick record button again (it might be re-enabled by recordAttendance's finally)
+                  const currentBtn = parentDiv.querySelector(`button[data-type="${type}"]`);
+                  if(currentBtn) {
+                      // Hide the button and show the success message temporarily
+                      currentBtn.style.display = 'none';
+                      parentDiv.insertBefore(successMsg, currentBtn);
+
+                      setTimeout(() => {
+                          successMsg.remove();
+                          currentBtn.style.display = 'inline-block';
+                          currentBtn.innerHTML = originalText;
+                          currentBtn.disabled = false;
+                      }, 3000);
+                  }
+
+              } catch (error) {
+                  // The error handling is mostly inside recordAttendance, just reset button state here
+                  button.innerHTML = originalText;
+                  button.disabled = false;
+              }
+         }
+
 
         /**
          * Records attendance for mass or meeting for the current date.
+         * @param {string} childId 
+         * @param {string} type - 'mass' or 'meeting'
+         * @param {HTMLElement} button 
+         * @param {number} points - Points to award for this action
          */
-        window.recordAttendance = async function(childId, type, button) {
-            if (!khademName) {
-                return showModal('صلاحيات مطلوبة', 'الرجاء إدخال اسمك وكلمة السر الموحدة للخدمة أولاً لتسجيل الحضور.');
-            }
-            
-            button.disabled = true;
-            const originalText = button.innerHTML;
-            button.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري التسجيل...';
+        window.recordAttendance = async function(childId, type, button, points = 0) {
+             if (!khademName) {
+                 throw new Error('Khadem not verified.');
+             }
+             
+             const isQuickRecord = button && button.classList.contains('quick-record-btn');
+
+             if (!isQuickRecord) {
+                 button.disabled = true;
+                 const originalText = button.innerHTML;
+                 button.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري التسجيل...';
+                 button.originalText = originalText; // Store for finally block
+             }
 
 
-            const todayDocId = formatDateToDocId(new Date());
-            const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), todayDocId);
+             const todayDocId = formatDateToDocId(new Date());
+             const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), todayDocId);
+             const childDocRef = doc(db, getChildrenCollectionPath(), childId); // Reference to the main child document
 
-            const dataToUpdate = {
-                date: todayDocId,
-                [`${type}`]: true, // mass: true or meeting: true
-                [`${type}Timestamp`]: Date.now(),
-                [`${type}Khadem`]: khademName // NEW: Record the Khadem who registered attendance
-            };
+             try {
+                 // 1. Check if attendance has already been recorded today
+                 const attendanceSnap = await getDoc(attendanceDocRef);
+                 const attendanceData = attendanceSnap.data();
+
+                 if (attendanceData && attendanceData[type]) {
+                    // Attendance already recorded, show message and exit gracefully
+                    if (!isQuickRecord) {
+                         showModal('مسجل مسبقاً', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بالفعل بتاريخ اليوم.`);
+                    }
+                    return; // EXIT HERE if already recorded
+                 }
+                 
+                 // 2. Prepare data for the attendance record (only if not recorded before)
+                 const dataToUpdate = {
+                     date: todayDocId,
+                     [`${type}`]: true, // mass: true or meeting: true
+                     [`${type}Points`]: points, // Record points earned for this event
+                     [`${type}Timestamp`]: Date.now(),
+                     [`${type}Khadem`]: khademName
+                 };
+
+                 // 3. Record the attendance and points for the specific day
+                 await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
+                 
+                 // 4. Update the total points on the main child document (only happens ONCE)
+                 await updateDoc(childDocRef, {
+                      totalPoints: increment(points) // Use Firestore increment for safety
+                 });
+
+                 if (!isQuickRecord) {
+                     showModal('تسجيل ناجح', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بواسطة الخادم: ${khademName}. (+${points} نقاط)`);
+                 }
+             } catch (error) {
+                 console.error(`Error recording ${type} attendance:`, error);
+                 showModal('خطأ في التسجيل', `حدث خطأ أثناء محاولة تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'}.`);
+                 throw error;
+             } finally {
+                 if (!isQuickRecord) {
+                     button.disabled = false;
+                     button.innerHTML = button.originalText;
+                 }
+             }
+        }
+
+        /**
+         * Handles the addition of manual bonus points.
+         */
+        window.handleBonusPoints = async function(childId, form) {
+             const points = parseInt(document.getElementById('bonus-points-input').value, 10);
+             const reason = document.getElementById('bonus-reason-input').value.trim();
+             const submitButton = form.querySelector('button[type="submit"]');
+
+             if (isNaN(points) || points <= 0) {
+                 return showModal('خطأ', 'الرجاء إدخال عدد صحيح موجب للنقاط.');
+             }
+             if (!reason) {
+                 return showModal('خطأ', 'الرجاء إدخال سبب البونص.');
+             }
+
+             submitButton.disabled = true;
+             submitButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الإضافة...';
+
+             const todayDocId = formatDateToDocId(new Date());
+             const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), todayDocId);
+             const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+             
+             // Prepare data for the attendance record (merge with existing daily record)
+             const dataToUpdate = {
+                 date: todayDocId,
+                 bonusPoints: increment(points), // Use increment if there's already bonus today
+                 bonusReason: reason, 
+                 bonusKhadem: khademName,
+                 bonusTimestamp: Date.now()
+             };
+
+             try {
+                  // 1. Record the bonus in the attendance sub-collection
+                 await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
+                 
+                 // 2. Update the total points on the main child document
+                 await updateDoc(childDocRef, {
+                      totalPoints: increment(points)
+                 });
+                 
+                 showModal('نجاح البونص', `تم إضافة ${points} نقاط بونص بنجاح للمخدوم.`);
+                 form.reset(); // Clear the form after successful submission
+
+             } catch (error) {
+                 console.error("Error adding bonus points:", error);
+                 showModal('خطأ في الإضافة', 'حدث خطأ أثناء إضافة نقاط البونص. الرجاء المحاولة مرة أخرى.');
+             } finally {
+                 submitButton.disabled = false;
+                 submitButton.innerText = '💰 إضافة البونص';
+             }
+        }
+        
+        /**
+         * Handles the removal of manual penalty points (the opposite of handleBonusPoints).
+         * @param {string} childId 
+         * @param {HTMLFormElement} form 
+         */
+        window.handlePenaltyPoints = async function(childId, form) {
+             const points = parseInt(document.getElementById('penalty-points-input').value, 10);
+             const reason = document.getElementById('penalty-reason-input').value.trim();
+             const submitButton = form.querySelector('button[type="submit"]');
+
+             if (isNaN(points) || points <= 0) {
+                 return showModal('خطأ', 'الرجاء إدخال عدد صحيح موجب للنقاط للخصم.');
+             }
+             if (!reason) {
+                 return showModal('خطأ', 'الرجاء إدخال سبب الخصم.');
+             }
+
+             submitButton.disabled = true;
+             submitButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الخصم...';
+
+             const todayDocId = formatDateToDocId(new Date());
+             const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), todayDocId);
+             const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+             
+             // Prepare data for the attendance record (merge with existing daily record)
+             // We use a new field 'penaltyPoints' and decrement the value in the document.
+             const dataToUpdate = {
+                 date: todayDocId,
+                 penaltyPoints: increment(points), // Note: We store the positive value of the penalty
+                 penaltyReason: reason, 
+                 penaltyKhadem: khademName,
+                 penaltyTimestamp: Date.now()
+             };
+
+             try {
+                  // 1. Record the penalty in the attendance sub-collection
+                 await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
+                 
+                 // 2. Update the total points on the main child document by DECREMENTING
+                 await updateDoc(childDocRef, {
+                      totalPoints: increment(-points) // Decrement the total points
+                 });
+                 
+                 showModal('خصم ناجح', `تم خصم ${points} نقاط بنجاح من المخدوم بسبب: ${reason}.`);
+                 form.reset(); // Clear the form after successful submission
+
+             } catch (error) {
+                 console.error("Error adding penalty points:", error);
+                 showModal('خطأ في الخصم', 'حدث خطأ أثناء خصم النقاط. الرجاء المحاولة مرة أخرى.');
+             } finally {
+                 submitButton.disabled = false;
+                 submitButton.innerText = '❌ خصم النقاط';
+             }
+        }
+
+
+        /**
+         * Handles Khadem editing the profile information.
+         * @param {string} childId 
+         * @param {HTMLFormElement} form 
+         */
+        window.handleProfileEdit = async function(childId, form) {
+            const name = document.getElementById('edit-name').value.trim();
+            const grade = document.getElementById('edit-grade').value.trim();
+            const phone = document.getElementById('edit-phone').value.trim();
+            const parentPhone = document.getElementById('edit-parent-phone').value.trim();
+            const address = document.getElementById('edit-address').value.trim();
+            const birthdate = document.getElementById('edit-birthdate').value.trim();
+            const editPhotoInput = document.getElementById('edit-photo-file');
+
+            const editButton = form.querySelector('button[type="submit"]');
+            editButton.disabled = true;
+            editButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الحفظ...';
+
+            let photoBase64 = document.getElementById('profile-child-photo').src; // Default to existing photo
 
             try {
-                await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
-                showModal('تسجيل ناجح', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بواسطة الخادم: ${khademName}.`);
+                // Handle new photo upload/change
+                if (editPhotoInput.files.length > 0) {
+                    const file = editPhotoInput.files[0];
+                    const reader = new FileReader();
+                    
+                    await new Promise((resolve, reject) => {
+                        reader.onload = (e) => {
+                            photoBase64 = e.target.result;
+                            resolve();
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(file);
+                    });
+                }
+                
+                const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+                
+                await updateDoc(childDocRef, {
+                    name,
+                    grade,
+                    phone,
+                    parentPhone,
+                    address,
+                    birthdate,
+                    photoBase64: photoBase64 // Will update photo if changed, otherwise keeps old src
+                });
+
+                showModal('نجاح التعديل', `تم تحديث بيانات المخدوم: ${name} بنجاح.`);
+                navigate('profile', childId); // Reload profile view to show changes
+
             } catch (error) {
-                console.error(`Error recording ${type} attendance:`, error);
-                showModal('خطأ في التسجيل', `حدث خطأ أثناء محاولة تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'}.`);
+                console.error("Error updating child profile:", error);
+                showModal('خطأ في التعديل', 'حدث خطأ أثناء حفظ التعديلات. الرجاء المحاولة مرة أخرى.');
             } finally {
-                button.disabled = false;
-                button.innerHTML = originalText;
+                editButton.disabled = false;
+                editButton.innerText = 'حفظ التعديلات';
             }
         }
+
+
+        /**
+         * Loads all children data and sets up real-time listener for the Admin Dashboard.
+         */
+        async function loadAdminDashboardData() {
+             const listContainer = document.getElementById('admin-dashboard-list');
+             if (!listContainer || !isFirebaseActive) return;
+
+             const childrenColRef = collection(db, getChildrenCollectionPath());
+             
+             // Use onSnapshot for real-time updates on the list
+             onSnapshot(childrenColRef, async (snapshot) => {
+                 const allChildren = [];
+                 
+                 snapshot.forEach(doc => {
+                     const data = doc.data();
+                     allChildren.push({ id: doc.id, ...data });
+                 });
+
+                 if (allChildren.length === 0) {
+                      listContainer.innerHTML = '<tr><td colspan="8" class="text-center p-4 text-gray-500">لا يوجد مخدومين مسجلين بعد.</td></tr>';
+                      return;
+                 }
+                 
+                 // --- Fetch Attendance Details for each child ---
+                 // This part requires fetching all attendance data for accurate total Mass/Meeting counts.
+                 // WARNING: This can be heavy on reads for large services, but ensures accuracy.
+                 
+                 // Create an array of promises to fetch attendance for all children
+                 const attendancePromises = allChildren.map(child => 
+                     getDocs(collection(db, getAttendanceCollectionPath(child.id)))
+                 );
+
+                 const attendanceSnapshots = await Promise.all(attendancePromises);
+
+                 const detailedChildren = allChildren.map((child, index) => {
+                     const attSnapshot = attendanceSnapshots[index];
+                     let massCount = 0;
+                     let meetingCount = 0;
+
+                     attSnapshot.forEach(attDoc => {
+                         const attData = attDoc.data();
+                         if (attData.mass) massCount++;
+                         if (attData.meeting) meetingCount++;
+                     });
+
+                     return {
+                         ...child,
+                         massCount,
+                         meetingCount
+                     };
+                 });
+                 
+                 // Sort children by Total Points descending
+                 detailedChildren.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
+
+                 // Render the table rows
+                 listContainer.innerHTML = detailedChildren.map((child, index) => {
+                     const photoHtml = child.photoBase64 
+                         ? `<img src="${child.photoBase64}" class="w-8 h-8 rounded-full border border-gray-300 object-cover ml-2 inline" alt="صورة">`
+                         : `<div class="w-8 h-8 rounded-full border border-gray-300 bg-gray-100 ml-2 inline-flex items-center justify-center text-sm">👤</div>`;
+
+                     const registrationDate = child.createdAt ? formatReadableDate(Date.parse(child.createdAt)) : 'غير متاح';
+
+                     return `
+                         <tr class="hover:bg-gray-50 transition duration-100">
+                             <td class="border text-sm font-bold text-gray-600">${index + 1}</td>
+                             <td class="border text-right whitespace-nowrap text-gray-800">
+                                  <div class="flex items-center justify-end min-w-[150px]">
+                                      ${child.name}
+                                      ${photoHtml}
+                                  </div>
+                             </td>
+                             <td class="border text-sm text-gray-600">${child.grade}</td>
+                             <td class="border text-lg font-extrabold text-custom-purple">${child.totalPoints || 0}</td>
+                             <td class="border text-base font-semibold text-green-600">${child.massCount}</td>
+                             <td class="border text-base font-semibold text-indigo-600">${child.meetingCount}</td>
+                             <td class="border text-xs text-gray-500 whitespace-nowrap">${registrationDate}</td>
+                             <td class="border">
+                                 <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition">
+                                     ملف المتابعة
+                                 </button>
+                             </td>
+                         </tr>
+                     `;
+                 }).join('');
+
+             }, (error) => {
+                 console.error("Error setting up dashboard listener:", error);
+                 listContainer.innerHTML = '<tr><td colspan="8" class="text-center p-4 text-red-500">خطأ في تحميل البيانات: فشل الاتصال بقاعدة البيانات.</td></tr>';
+             });
+        }
+
+
+        /**
+         * Renders the view for searching for a lost code/ID by name.
+         */
+        function renderFindCodeSearchView(container) {
+             // NEW: Added a warning if Firebase is inactive
+             const warningHtml = !isFirebaseActive ? `
+                 <div class="p-3 mb-4 rounded-lg bg-red-100 border border-red-400 text-red-700 text-sm font-semibold text-center">
+                     ⚠️ وضع المحاكاة نشط. لن يتمكن البحث من الاتصال بقاعدة البيانات.
+                 </div>
+             ` : '';
+
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                     <h2 class="text-2xl font-bold mb-6 text-blue-500 border-b pb-2">البحث عن كود التسجيل (ID)</h2>
+                     ${warningHtml} <!-- Show warning if Firebase is inactive -->
+                     <p class="mb-4 text-gray-700">أدخل اسمك بالكامل للبحث عن كود التسجيل الخاص بك وعرضه كـ QR Code.</p>
+                     <form onsubmit="event.preventDefault(); handleFindCodeSearch()" class="space-y-4">
+                         <div>
+                             <label for="find-code-name-input" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
+                             <input type="text" id="find-code-name-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="كما تم تسجيله في المرة الأولى">
+                         </div>
+                         <button type="submit" id="find-code-btn" class="w-full primary-btn bg-blue-500 text-white rounded-lg hover:bg-blue-600">بحث وعرض الكود</button>
+                     </form>
+                     
+                     <div id="find-code-result" class="mt-6 p-4 border-l-4 border-blue-500 bg-blue-50 rounded-lg hidden text-center">
+                          <p class="font-bold text-blue-700 mb-2">تم العثور على الكود! 🎉</p>
+                          <p class="text-gray-700 mb-4">هذا هو الـ QR Code الخاص بك:</p>
+                          <div id="found-qr-code-area" class="text-center p-4 border-4 border-gray-200 rounded-lg">
+                               <!-- QR Code will be generated here -->
+                          </div>
+                          <p class="mt-4 text-sm text-gray-500">احفظ هذا الكود لتسجيل حضورك في المرات القادمة.</p>
+                          <!-- Copy Link Button -->
+                          <button id="copy-found-link-btn" onclick="copyFoundCodeLink()" class="mt-3 w-full primary-btn bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+                              🔗 نسخ رابط كود التسجيل
+                          </button>
+                      </div>
+                      <button onclick="navigate('makhdoum_options')" class="mt-4 w-full text-sm text-gray-600 hover:underline">العودة للخيارات</button>
+                 </div>
+             `;
+        }
+
+        /**
+         * Renders the view for searching and listing children (Admin only).
+         */
+        function renderChildrenListView(container) {
+             // CHECK: Redirect to verification if Khadem name is not set
+             if (!khademName) {
+                 // Set current page so verification can redirect back here
+                 currentPage = 'children_list'; 
+                 renderAttendanceVerificationView(container, null);
+                 return;
+             }
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                     <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">🔍 البحث عن مخدوم (${khademName})</h2>
+                     <p class="mb-4 text-gray-700">ابحث باسم المخدوم أو بكوده (ID) لفتح ملف المتابعة أو تسجيل الحضور مباشرة.</p>
+                     
+                     <form onsubmit="event.preventDefault(); handleSearchChildren()" class="space-y-4 mb-6">
+                         <div class="flex flex-col sm:flex-row gap-2">
+                             <input type="text" id="search-query" required class="flex-grow px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="أدخل اسم الولد أو كوده">
+                             <button type="submit" id="search-btn" class="primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600 w-full sm:w-auto px-6">بحث</button>
+                         </div>
+                     </form>
+
+                     <div id="search-results" class="space-y-3 max-h-96 overflow-y-auto border p-4 rounded-lg bg-gray-50">
+                         <p class="text-gray-500 text-center">نتائج البحث ستظهر هنا...</p>
+                     </div>
+                 </div>
+             `;
+        }
+        
+        /**
+         * Toggles the edit form visibility in the profile view.
+         * @param {string} childId 
+         * @param {Object} data 
+         */
+        window.toggleEditMode = function(childId, data) {
+            const displayDiv = document.getElementById('profile-display-mode');
+            const editDiv = document.getElementById('profile-edit-mode');
+            const toggleButton = document.getElementById('toggle-edit-btn');
+            const isEditing = editDiv.classList.contains('hidden');
+
+            if (isEditing) {
+                // Switch to edit mode
+                displayDiv.classList.add('hidden');
+                editDiv.classList.remove('hidden');
+                toggleButton.innerText = 'إلغاء التعديل';
+
+                // Fill the form fields with current data
+                document.getElementById('edit-name').value = data.name || '';
+                document.getElementById('edit-grade').value = data.grade || '';
+                document.getElementById('edit-phone').value = data.phone || '';
+                document.getElementById('edit-parent-phone').value = data.parentPhone || '';
+                document.getElementById('edit-address').value = data.address || '';
+                document.getElementById('edit-birthdate').value = data.birthdate || '';
+
+            } else {
+                // Switch back to display mode
+                displayDiv.classList.remove('hidden');
+                editDiv.classList.add('hidden');
+                toggleButton.innerText = 'تعديل بيانات المخدوم';
+            }
+        }
+
+
+        /**
+         * Renders the child's profile view for admin attendance tracking.
+         */
+        function renderProfileView(container, childId) {
+             // CHECK: Redirect to verification if Khadem name is not set
+             if (!khademName) {
+                 renderAttendanceVerificationView(container, childId);
+                 return;
+             }
+             
+             if (!childId) {
+                 container.innerHTML = '<p class="text-red-600 text-center mt-8">خطأ: لم يتم تحديد كود الولد للمتابعة.</p>';
+                 return;
+             }
+             
+             if (!isFirebaseActive) {
+                 container.innerHTML = `
+                      <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
+                           <h2 class="text-2xl font-bold mb-4 text-red-500">⚠️ وضع المحاكاة</h2>
+                           <p class="text-gray-700 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض ملف المتابعة أو تسجيل الحضور.</p>
+                           <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لاستخدام وظيفة المتابعة.</p>
+                           <button onclick="navigate('children_list')" class="mt-6 primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">العودة لصفحة الإدارة</button>
+                      </div>
+                  `;
+                  return;
+             }
+             
+             const pointsSettings = getPointsSettings();
+
+             container.innerHTML = `
+                  <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                     <!-- Profile Display Mode -->
+                     <div id="profile-display-mode">
+                          <div class="flex items-start justify-between mb-4 border-b pb-4">
+                               <div class="flex items-center space-x-4 space-x-reverse">
+                                   <!-- Child Photo Placeholder/Container -->
+                                   <img id="profile-child-photo" src="https://placehold.co/60x60/f0f4f8/94a3b8?text=👤" class="w-16 h-16 rounded-full border-4 border-custom-purple object-cover flex-shrink-0" alt="صورة المخدوم">
+                                   <div>
+                                       <h2 class="text-2xl font-bold text-custom-purple">ملف متابعة: <span id="child-name-display" class="text-gray-800">جاري التحميل...</span></h2>
+                                       <!-- Display Child ID/Code -->
+                                       <p class="text-xs font-mono text-gray-500 mt-1">الكود: <span id="child-id-code" class="font-semibold text-custom-purple">${childId}</span></p>
+                                       <p class="text-gray-500">الصف/الخدمة: <span id="child-grade-display" class="font-semibold">...</span></p>
+                                       <p class="text-gray-500">تاريخ الميلاد: <span id="child-birthdate-display" class="font-semibold">...</span></p>
+                                       <p class="text-gray-500">رقم الموبايل: <span id="child-phone-display" class="font-semibold">...</span></p>
+                                       <p class="text-gray-500">رقم ولي الأمر: <span id="child-parent-phone-display" class="font-semibold">...</span></p>
+                                       <p class="text-gray-500">العنوان: <span id="child-address-display" class="font-semibold">...</span></p>
+                                       <!-- Total Points Display -->
+                                       <p class="text-lg font-bold mt-2">إجمالي النقاط: <span id="child-total-points" class="text-green-600">0</span></p>
+                                   </div>
+                               </div>
+                               <!-- Edit Button -->
+                               <button id="toggle-edit-btn" onclick="loadChildDataAndToggleEdit('${childId}')" class="px-4 py-2 text-sm font-medium rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 transition">تعديل بيانات المخدوم</button>
+                          </div>
+                      </div>
+
+                     <!-- Profile Edit Mode (Hidden by Default) -->
+                     <div id="profile-edit-mode" class="hidden">
+                         <h3 class="text-xl font-bold mb-4 text-custom-purple">تعديل البيانات الأساسية</h3>
+                         <form onsubmit="event.preventDefault(); handleProfileEdit('${childId}', this)" class="space-y-4 mb-6 p-4 border rounded-lg bg-yellow-50">
+                             <div>
+                                 <label for="edit-name" class="block text-sm font-medium text-gray-700 mb-1">الاسم بالكامل:</label>
+                                 <input type="text" id="edit-name" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                             </div>
+                             <div>
+                                 <label for="edit-grade" class="block text-sm font-medium text-gray-700 mb-1">الصف/الخدمة:</label>
+                                 <input type="text" id="edit-grade" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                             </div>
+                             <div>
+                                 <label for="edit-phone" class="block text-sm font-medium text-gray-700 mb-1">رقم الهاتف:</label>
+                                 <input type="tel" id="edit-phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                             </div>
+                             <div>
+                                <label for="edit-parent-phone" class="block text-sm font-medium text-gray-700 mb-1">رقم هاتف ولي الأمر:</label>
+                                <input type="tel" id="edit-parent-phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                             </div>
+                             <div>
+                                <label for="edit-address" class="block text-sm font-medium text-gray-700 mb-1">العنوان:</label>
+                                <input type="text" id="edit-address" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                             </div>
+                             <div>
+                                 <label for="edit-birthdate" class="block text-sm font-medium text-gray-700 mb-1">تاريخ الميلاد:</label>
+                                 <input type="date" id="edit-birthdate" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                             </div>
+                              <div class="border p-4 rounded-lg bg-white">
+                                 <label for="edit-photo-file" class="block text-sm font-medium text-gray-700 mb-2">تغيير صورة المخدوم (اختياري):</label>
+                                 <input type="file" id="edit-photo-file" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-custom-purple file:text-white hover:file:bg-purple-700">
+                              </div>
+                             <button type="submit" class="w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">حفظ التعديلات</button>
+                             <button type="button" onclick="toggleEditMode('${childId}', {})" id="cancel-edit-btn" class="w-full primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">إلغاء التعديل</button>
+                         </form>
+                     </div>
+
+
+                       <h3 class="text-xl font-bold mb-4 border-b pb-2">تسجيل حضور اليوم: ${formatDateToDocId(new Date())}</h3>
+                       
+                       <!-- Attendance Status and Record Buttons -->
+                       <div id="attendance-status" class="mb-6 p-4 rounded-lg bg-gray-100 grid grid-cols-2 gap-4 text-center">
+                           <div>
+                               <p class="font-medium text-gray-700">القداس (${pointsSettings.massPoints} نقطة):</p>
+                               <p id="mass-status" class="text-lg font-bold text-red-500">غير مسجل</p>
+                               <p id="mass-khadem" class="text-xs text-gray-500 mt-1"></p>
+                           </div>
+                           <div>
+                               <p class="font-medium text-gray-700">الإجتماع (${pointsSettings.meetingPoints} نقاط):</p>
+                               <p id="meeting-status" class="text-lg font-bold text-red-500">غير مسجل</p>
+                               <p id="meeting-khadem" class="text-xs text-gray-500 mt-1"></p>
+                           </div>
+                       </div>
+
+                       <div class="flex flex-col sm:flex-row gap-4 mb-8">
+                          <button onclick="recordAttendance('${childId}', 'mass', this, ${pointsSettings.massPoints})" class="flex-1 primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600" data-type="mass">✅ تسجيل حضور القداس</button>
+                          <button onclick="recordAttendance('${childId}', 'meeting', this, ${pointsSettings.meetingPoints})" class="flex-1 primary-btn bg-indigo-500 text-white rounded-lg hover:bg-indigo-600" data-type="meeting">✅ تسجيل حضور الإجتماع</button>
+                       </div>
+
+                       <!-- Bonus Points Section -->
+                       <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-8 text-blue-600">🎁 إضافة نقاط بونص (مكافأة)</h3>
+                       <form onsubmit="event.preventDefault(); handleBonusPoints('${childId}', this)" class="space-y-3 p-4 bg-blue-50 rounded-lg">
+                           <div>
+                               <label for="bonus-points-input" class="block text-sm font-medium text-gray-700 mb-1">قيمة البونص (نقاط):</label>
+                               <input type="number" id="bonus-points-input" required min="1" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="مثال: 5 أو 10">
+                           </div>
+                           <div>
+                               <label for="bonus-reason-input" class="block text-sm font-medium text-gray-700 mb-1">السبب (ملاحظات):</label>
+                               <input type="text" id="bonus-reason-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="مثال: حفظ آية، خدمة مفاجئة، مسابقة">
+                           </div>
+                           <button type="submit" class="w-full primary-btn bg-blue-500 text-white rounded-lg hover:bg-blue-600">💰 إضافة البونص</button>
+                       </form>
+
+                       <!-- NEW: Penalty Points Section -->
+                       <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-8 text-penalty">🚫 خصم نقاط (عقاب)</h3>
+                       <form onsubmit="event.preventDefault(); handlePenaltyPoints('${childId}', this)" class="space-y-3 p-4 bg-penalty rounded-lg border border-red-300">
+                           <div>
+                               <label for="penalty-points-input" class="block text-sm font-medium text-gray-700 mb-1">قيمة الخصم (نقاط):</label>
+                               <input type="number" id="penalty-points-input" required min="1" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" placeholder="مثال: 5 أو 10">
+                           </div>
+                           <div>
+                               <label for="penalty-reason-input" class="block text-sm font-medium text-gray-700 mb-1">السبب (ملاحظات):</label>
+                               <input type="text" id="penalty-reason-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" placeholder="مثال: غياب بدون عذر، سلوك سيئ، تأخير متكرر">
+                           </div>
+                           <button type="submit" class="w-full primary-btn bg-red-600 text-white rounded-lg hover:bg-red-700">❌ خصم النقاط</button>
+                       </form>
+
+                       
+                       <button onclick="navigate('children_list')" class="mt-8 w-full primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">العودة لقائمة البحث</button>
+
+                       <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-8">سجل الحضور بالتواريخ</h3>
+                       <!-- Attendance History will show points earned per day -->
+                       <div id="attendance-history" class="space-y-3 max-h-96 overflow-y-auto">
+                           <p class="text-gray-500">جارِ تحميل السجل...</p>
+                       </div>
+                   </div>
+               `;
+             
+             // Start fetching data and listening for changes
+             loadChildProfileAndAttendance(childId);
+        }
+
+        /**
+         * Loads child data and sets up edit mode (used by the "تعديل" button).
+         * @param {string} childId 
+         */
+        window.loadChildDataAndToggleEdit = async function(childId) {
+            const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+            try {
+                const docSnap = await getDoc(childDocRef);
+                if (docSnap.exists()) {
+                    toggleEditMode(childId, docSnap.data());
+                } else {
+                    showModal('خطأ', 'لم يتم العثور على ملف الولد لفتح وضع التعديل.');
+                }
+            } catch (error) {
+                console.error("Error fetching child data for edit:", error);
+                showModal('خطأ', 'حدث خطأ أثناء تحميل البيانات.');
+            }
+        }
+
+
+        /**
+         * Loads child details and sets up real-time attendance listener. (Khadem View)
+         */
+        async function loadChildProfileAndAttendance(childId) {
+             const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+             try {
+                 const childSnap = await getDoc(childDocRef);
+                 if (childSnap.exists()) {
+                     const data = childSnap.data();
+                     document.getElementById('child-name-display').innerText = data.name;
+                     document.getElementById('child-grade-display').innerText = data.grade;
+                     document.getElementById('child-id-code').innerText = childId; 
+                     document.getElementById('child-total-points').innerText = data.totalPoints || 0; // Display total points
+                     document.getElementById('child-birthdate-display').innerText = data.birthdate || 'غير متاح'; 
+                     document.getElementById('child-phone-display').innerText = data.phone || 'غير متاح'; // NEW
+                     document.getElementById('child-parent-phone-display').innerText = data.parentPhone || 'غير متاح'; // NEW
+                     document.getElementById('child-address-display').innerText = data.address || 'غير متاح'; // NEW
+
+                     const photoEl = document.getElementById('profile-child-photo');
+                     if (photoEl && data.photoBase64) {
+                         photoEl.src = data.photoBase64;
+                     } else if (photoEl) {
+                         photoEl.src = "https://placehold.co/60x60/f0f4f8/94a3b8?text=👤";
+                     }
+
+                 } else {
+                     showModal('خطأ', 'لم يتم العثور على ملف الولد.');
+                     navigate('home'); 
+                     return;
+                 }
+             } catch (error) {
+                 console.error("Error loading child profile:", error);
+                 showModal('خطأ في قاعدة البيانات', 'لم نتمكن من الوصول لملف الولد.');
+                 return;
+             }
+
+             // 2. Setup Real-time Attendance Listener (for daily attendance and history)
+             const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
+             
+             // Listen to the daily attendance records
+             onSnapshot(attendanceCollectionRef, (snapshot) => {
+                 const historyContainer = document.getElementById('attendance-history');
+                 if (!historyContainer) return; 
+
+                 const todayDocId = formatDateToDocId(new Date());
+                 const allAttendance = [];
+                 let todayAttendance = null; 
+                 
+                 snapshot.forEach(doc => {
+                     const data = doc.data();
+                     allAttendance.push({ id: doc.id, ...data });
+                     if (doc.id === todayDocId) {
+                         todayAttendance = data;
+                     }
+                 });
+
+                 // Update Today's Status
+                 const pointsSettings = getPointsSettings();
+                 if (todayAttendance) {
+                     // Mass Status
+                     // FIX: Use the points saved in the attendance doc, not the current global settings
+                     const massPoints = todayAttendance.massPoints || 0;
+                     const meetingPoints = todayAttendance.meetingPoints || 0;
+
+                     const massStatusEl = document.getElementById('mass-status');
+                     const massKhademEl = document.getElementById('mass-khadem');
+                     massStatusEl.className = todayAttendance.mass ? 'text-lg font-bold text-green-600' : 'text-lg font-bold text-red-500';
+                     // FIX: Display the POINTS SAVED in the daily attendance doc
+                     massStatusEl.innerText = todayAttendance.mass ? `حضر (+${massPoints} نقطة)` : 'غير مسجل';
+                     massKhademEl.innerText = todayAttendance.massKhadem ? `بواسطة: ${todayAttendance.massKhadem}` : '';
+
+                     // Meeting Status
+                     const meetingStatusEl = document.getElementById('meeting-status');
+                     const meetingKhademEl = document.getElementById('meeting-khadem');
+                     meetingStatusEl.className = todayAttendance.meeting ? 'text-lg font-bold text-green-600' : 'text-lg font-bold text-red-500';
+                     // FIX: Display the POINTS SAVED in the daily attendance doc
+                     meetingStatusEl.innerText = todayAttendance.meeting ? `حضر (+${meetingPoints} نقاط)` : 'غير مسجل';
+                     meetingKhademEl.innerText = todayAttendance.meetingKhadem ? `بواسطة: ${todayAttendance.meetingKhadem}` : '';
+                 } else {
+                     document.getElementById('mass-status').innerText = 'غير مسجل';
+                     document.getElementById('mass-khadem').innerText = '';
+                     document.getElementById('meeting-status').innerText = 'غير مسجل';
+                     document.getElementById('meeting-khadem').innerText = '';
+                 }
+
+
+                 // Render History (Sort by date descending)
+                 allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+
+                 if (allAttendance.length === 0) {
+                     historyContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور حتى الآن.</p>';
+                     return;
+                 }
+
+                 historyContainer.innerHTML = allAttendance.map(att => {
+                     const dailyTotalPoints = (att.massPoints || 0) + (att.meetingPoints || 0) + (att.bonusPoints || 0) - (att.penaltyPoints || 0);
+                     
+                     // Display Bonus
+                     const bonusInfo = att.bonusPoints ? 
+                          `<div class="mt-1">
+                               <p class="text-xs text-blue-700">🎁 بونص: +${att.bonusPoints} (${att.bonusReason || 'بدون سبب'})</p>
+                               ${att.bonusKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.bonusKhadem}</p>` : ''}
+                           </div>` : '';
+
+                     // NEW: Display Penalty
+                     const penaltyInfo = att.penaltyPoints ? 
+                          `<div class="mt-1">
+                               <p class="text-xs text-penalty">⛔ خصم: -${att.penaltyPoints} (${att.penaltyReason || 'بدون سبب'})</p>
+                               ${att.penaltyKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.penaltyKhadem}</p>` : ''}
+                           </div>` : '';
+
+                     const totalPointsHtml = dailyTotalPoints > 0 ? 
+                          `<span class="text-lg font-bold text-green-700 mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span>` : 
+                          `<span class="text-lg font-bold text-penalty mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span>`;
+                    
+                     const massKhademDisplay = att.massKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.massKhadem}</p>` : '';
+                     const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
+
+                     return `
+                      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-100 border-l-4 border-yellow-500' : 'bg-gray-50'}">
+                          <span class="font-bold text-gray-800">${att.id}</span>
+                          <div class="flex flex-col items-end sm:items-center">
+                              ${totalPointsHtml}
+                              <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
+                                   <div class="flex flex-col items-end">
+                                        <span class="text-sm font-medium ${att.mass ? 'text-green-600' : 'text-red-500'}">
+                                            القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
+                                        </span>
+                                        ${massKhademDisplay}
+                                   </div>
+                                   <div class="flex flex-col items-end">
+                                        <span class="text-sm font-medium ${att.meeting ? 'text-green-600' : 'text-red-500'}">
+                                            الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
+                                        </span>
+                                        ${meetingKhademDisplay}
+                                   </div>
+                              </div>
+                              ${bonusInfo}
+                              ${penaltyInfo}
+                          </div>
+                      </div>
+                      `;
+                 }).join('');
+             }, (error) => {
+                 console.error("Error setting up attendance snapshot listener:", error);
+                 showModal('خطأ في المتابعة', 'حدث خطأ أثناء تحميل سجل الحضور في الوقت الفعلي.');
+             }
+             );
+             
+             // 3. Setup listener for main child doc to update total points immediately
+             // NOTE: This listener is CRITICAL for updating totalPoints immediately after incrementing.
+             onSnapshot(childDocRef, (docSnap) => {
+                 if (docSnap.exists() && document.getElementById('child-total-points')) {
+                     document.getElementById('child-total-points').innerText = docSnap.data().totalPoints || 0;
+                 }
+             }, (error) => {
+                 console.error("Error setting up main document snapshot listener:", error);
+             });
+
+        }
+
+        /**
+         * Renders the search view for children to check their own history.
+         */
+        function renderHistorySearchView(container) {
+             container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
+                     <h2 class="text-2xl font-bold mb-6 text-custom-purple border-b pb-2">عرض سجل الحضور الخاص بي</h2>
+                     <p class="mb-4 text-gray-700">أدخل الكود الخاص بك (ID) لعرض سجل حضورك:</p>
+                     <form id="history-search-form" class="space-y-4">
+                         <div>
+                             <label for="history-id-input" class="block text-sm font-medium text-gray-700 mb-1">كود الولد (Child ID):</label>
+                             <input type="text" id="history-id-input" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-custom-purple focus:border-custom-purple" placeholder="أدخل كود التسجيل هنا">
+                         </div>
+                         <button type="submit" class="w-full primary-btn bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">عرض السجل</button>
+                     </form>
+                 </div>
+             `;
+             document.getElementById('history-search-form').onsubmit = handleHistorySearch;
+        }
+
 
         /**
          * Handles history search form submission.
          */
         async function handleHistorySearch(e) {
-            e.preventDefault();
-            const id = document.getElementById('history-id-input').value.trim();
-             if (!isFirebaseActive) {
-                showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
-                    <p class="text-xs text-red-500 mb-3">
-                        للتجربة: يمكنك استخدام أي كود، ولكن لن يتم عرض ملف الولد.
-                    </p>
-                `);
-                 return;
-            }
+             e.preventDefault();
+             const id = document.getElementById('history-id-input').value.trim();
+              if (!isFirebaseActive) {
+                 showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
+                      <p class="text-xs text-red-500 mb-3">
+                          للتجربة: يمكنك استخدام أي كود، ولكن لن يتم عرض ملف الولد.
+                      </p>
+                  `);
+                  return;
+              }
 
-            if (id) {
-                 // Check if the ID is valid
-                const docRef = doc(db, getChildrenCollectionPath(), id);
-                const docSnap = await getDoc(docRef);
+             if (id) {
+                  // Check if the ID is valid
+                 const docRef = doc(db, getChildrenCollectionPath(), id);
+                 const docSnap = await getDoc(docRef);
 
-                if (docSnap.exists()) {
-                    navigate('child_history', id);
-                } else {
-                    showModal('كود غير صحيح', 'لم يتم العثور على ملفك بهذا الكود (ID). تأكد من الكود المدخل.');
-                }
-            }
+                 if (docSnap.exists()) {
+                     navigate('child_history', id);
+                 } else {
+                     showModal('كود غير صحيح', 'لم يتم العثور على ملفك بهذا الكود (ID). تأكد من الكود المدخل.');
+                 }
+             }
         }
 
         /**
-         * Loads child details and sets up real-time attendance listener.
+         * Renders the full attendance history for the child.
          */
-        async function loadChildProfileAndAttendance(childId) {
-            // 1. Load Child Details (similar to before)
-            const childDocRef = doc(db, getChildrenCollectionPath(), childId);
-            try {
-                const childSnap = await getDoc(childDocRef);
-                if (childSnap.exists()) {
-                    const data = childSnap.data();
-                    document.getElementById('child-name-display').innerText = data.name;
-                    document.getElementById('child-grade-display').innerText = data.grade;
-                } else {
-                    showModal('خطأ', 'لم يتم العثور على ملف الولد.');
-                    navigate('home'); 
-                    return;
-                }
-            } catch (error) {
-                console.error("Error loading child profile:", error);
-                showModal('خطأ في قاعدة البيانات', 'لم نتمكن من الوصول لملف الولد.');
-                return;
-            }
+        function renderChildHistoryView(container, childId) {
+             if (!childId) {
+                 container.innerHTML = '<p class="text-red-600 text-center mt-8">خطأ: لم يتم تحديد كود الولد.</p>';
+                 return;
+             }
+             
+             if (!isFirebaseActive) {
+                  container.innerHTML = `
+                      <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
+                          <h2 class="text-2xl font-bold mb-4 text-red-500">⚠️ وضع المحاكاة</h2>
+                          <p class="text-gray-700 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض سجل الحضور.</p>
+                          <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لعرض البيانات الحقيقية.</p>
+                          <button onclick="navigate('history_search')" class="mt-6 primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">🔍 بحث عن كود آخر</button>
+                      </div>
+                  `;
+                  return;
+             }
 
-            // 2. Setup Real-time Attendance Listener
-            const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
-            
-            onSnapshot(attendanceCollectionRef, (snapshot) => {
-                const historyContainer = document.getElementById('attendance-history');
-                if (!historyContainer) return; 
+              container.innerHTML = `
+                 <div class="bg-white p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
+                     <div class="flex items-center space-x-4 space-x-reverse mb-6 border-b pb-4">
+                          <!-- Child Photo Placeholder/Container -->
+                          <img id="history-child-photo" src="https://placehold.co/60x60/f0f4f8/94a3b8?text=👤" class="w-16 h-16 rounded-full border-4 border-indigo-500 object-cover flex-shrink-0" alt="صورة المخدوم">
+                          <div>
+                              <h2 class="text-2xl font-bold text-custom-purple">سجل حضوري</h2>
+                              <p class="text-gray-600">الاسم: <span id="child-history-name" class="font-semibold">جاري التحميل...</span></p>
+                              <!-- Display Child ID/Code for Makhdoum -->
+                              <p class="text-xs font-mono text-gray-500 mt-1">الكود: <span id="child-history-id-code" class="font-semibold text-indigo-500">${childId}</span></p>
+                              <!-- Total Points Display for Makhdoum -->
+                              <p class="text-lg font-bold mt-2">إجمالي النقاط: <span id="child-history-total-points" class="text-green-600">0</span></p>
+                          </div>
+                      </div>
 
-                const todayDocId = formatDateToDocId(new Date());
-                const allAttendance = [];
-                let todayAttendance = null; 
-                
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    allAttendance.push({ id: doc.id, ...data });
-                    if (doc.id === todayDocId) {
-                        todayAttendance = data;
-                    }
-                });
-
-                // Update Today's Status
-                if (todayAttendance) {
-                    // Mass Status
-                    const massStatusEl = document.getElementById('mass-status');
-                    const massKhademEl = document.getElementById('mass-khadem');
-                    massStatusEl.className = todayAttendance.mass ? 'text-lg font-bold text-green-600' : 'text-lg font-bold text-red-500';
-                    massStatusEl.innerText = todayAttendance.mass ? 'حضر' : 'غير مسجل';
-                    massKhademEl.innerText = todayAttendance.massKhadem ? `بواسطة: ${todayAttendance.massKhadem}` : '';
-
-                    // Meeting Status
-                    const meetingStatusEl = document.getElementById('meeting-status');
-                    const meetingKhademEl = document.getElementById('meeting-khadem');
-                    meetingStatusEl.className = todayAttendance.meeting ? 'text-lg font-bold text-green-600' : 'text-lg font-bold text-red-500';
-                    meetingStatusEl.innerText = todayAttendance.meeting ? 'حضر' : 'غير مسجل';
-                    meetingKhademEl.innerText = todayAttendance.meetingKhadem ? `بواسطة: ${todayAttendance.meetingKhadem}` : '';
-
-                } else {
-                    document.getElementById('mass-status').innerText = 'غير مسجل';
-                    document.getElementById('meeting-status').innerText = 'غير مسجل';
-                    document.getElementById('mass-khadem').innerText = '';
-                    document.getElementById('meeting-khadem').innerText = '';
-                }
-
-
-                // Render History (Sort by date descending)
-                allAttendance.sort((a, b) => b.id.localeCompare(a.id));
-
-                if (allAttendance.length === 0) {
-                    historyContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور حتى الآن.</p>';
-                    return;
-                }
-
-                historyContainer.innerHTML = allAttendance.map(att => `
-                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-100 border-l-4 border-yellow-500' : 'bg-gray-50'}">
-                        <span class="font-bold text-gray-800">${att.id}</span>
-                        <div class="flex space-x-3 space-x-reverse flex-wrap items-center">
-                            <span class="text-sm font-medium ${att.mass ? 'text-green-600' : 'text-red-500'}">
-                                القداس: ${att.mass ? 'حضر' : 'غائب'}
-                                ${att.massKhadem ? `<span class="text-xs text-gray-600 block sm:inline">(${att.massKhadem})</span>` : ''}
-                            </span>
-                            <span class="text-sm font-medium ${att.meeting ? 'text-green-600' : 'text-red-500'}">
-                                الإجتماع: ${att.meeting ? 'حضر' : 'غائب'}
-                                ${att.meetingKhadem ? `<span class="text-xs text-gray-600 block sm:inline">(${att.meetingKhadem})</span>` : ''}
-                            </span>
-                        </div>
-                    </div>
-                `).join('');
-
-            }, (error) => {
-                console.error("Error setting up snapshot listener:", error);
-                showModal('خطأ في المتابعة', 'حدث خطأ أثناء تحميل سجل الحضور في الوقت الفعلي.');
-            }
-            );
+                       <h3 class="text-xl font-bold mb-4">تفاصيل الحضور</h3>
+                       <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto">
+                           <p class="text-gray-500">جارِ تحميل السجل...</p>
+                       </div>
+                       <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">🔍 بحث عن كود آخر</button>
+                   </div>
+               `;
+             
+             // Load and listen for data
+             loadChildHistory(childId);
         }
 
         /**
-         * Loads child history details and sets up real-time attendance listener for the child view.
+         * Loads child history details and sets up real-time attendance listener for the child view. (Makhdoum View)
          */
         async function loadChildHistory(childId) {
-             // 1. Load Child Details
-            const childDocRef = doc(db, getChildrenCollectionPath(), childId);
-            try {
-                const childSnap = await getDoc(childDocRef);
-                if (childSnap.exists()) {
-                    const data = childSnap.data();
-                    document.getElementById('child-history-name').innerText = data.name;
-                } else {
-                    document.getElementById('child-history-name').innerText = 'غير موجود';
-                    return;
-                }
-            } catch (error) {
-                console.error("Error loading child profile:", error);
-                document.getElementById('child-history-name').innerText = 'خطأ في التحميل';
-                return;
-            }
+             const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+             try {
+                 const childSnap = await getDoc(childDocRef);
+                 if (childSnap.exists()) {
+                     const data = childSnap.data();
+                     document.getElementById('child-history-name').innerText = data.name;
+                     document.getElementById('child-history-id-code').innerText = childId;
+                     document.getElementById('child-history-total-points').innerText = data.totalPoints || 0; // Display total points
+                     
+                     const photoEl = document.getElementById('history-child-photo');
+                     if (photoEl && data.photoBase64) {
+                         photoEl.src = data.photoBase64;
+                     } else if (photoEl) {
+                         photoEl.src = "https://placehold.co/60x60/f0f4f8/94a3b8?text=👤";
+                     }
+
+                 } else {
+                     document.getElementById('child-history-name').innerText = 'غير موجود';
+                     return;
+                 }
+             } catch (error) {
+                 console.error("Error loading child profile:", error);
+                 document.getElementById('child-history-name').innerText = 'خطأ في التحميل';
+                 return;
+             }
+             
+             // 1. Setup listener for main child doc to update total points immediately
+             // NOTE: This listener is CRITICAL for updating totalPoints immediately after incrementing.
+             const childHistoryDocRef = doc(db, getChildrenCollectionPath(), childId);
+             onSnapshot(childHistoryDocRef, (docSnap) => {
+                 if (docSnap.exists() && document.getElementById('child-history-total-points')) {
+                     document.getElementById('child-history-total-points').innerText = docSnap.data().totalPoints || 0;
+                 }
+             }, (error) => {
+                 console.error("Error setting up main document snapshot listener (history):", error);
+             });
 
 
-            // 2. Setup Real-time Attendance Listener
-            const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
-            
-            onSnapshot(attendanceCollectionRef, (snapshot) => {
-                const listContainer = document.getElementById('child-attendance-list');
-                if (!listContainer) return; // Guard for view change
+             // 2. Setup Real-time Attendance Listener (for daily attendance and history)
+             const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
+             
+             onSnapshot(attendanceCollectionRef, (snapshot) => {
+                 const listContainer = document.getElementById('child-attendance-list');
+                 if (!listContainer) return; // Guard for view change
 
-                const allAttendance = [];
-                snapshot.forEach(doc => {
-                    allAttendance.push({ id: doc.id, ...doc.data() });
-                });
+                 const allAttendance = [];
+                 snapshot.forEach(doc => {
+                     allAttendance.push({ id: doc.id, ...doc.data() });
+                 });
 
-                // Render History (Sort by date descending)
-                allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+                 // Render History (Sort by date descending)
+                 allAttendance.sort((a, b) => b.id.localeCompare(a.id));
 
-                if (allAttendance.length === 0) {
-                    listContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور لك حتى الآن.</p>';
-                    return;
-                }
+                 if (allAttendance.length === 0) {
+                     listContainer.innerHTML = '<p class="text-gray-500 p-4">لم يتم تسجيل أي حضور لك حتى الآن.</p>';
+                     return;
+                 }
 
-                listContainer.innerHTML = allAttendance.map(att => `
-                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl bg-blue-50 border-r-4 border-blue-400">
-                        <span class="font-bold text-lg text-blue-800 mb-2 sm:mb-0">${att.id}</span>
-                        <div class="flex gap-4 flex-wrap">
-                            <span class="text-sm font-medium ${att.mass ? 'text-green-600 bg-green-100' : 'text-red-500 bg-red-100'} px-2 py-1 rounded-full">
-                                القداس: ${att.mass ? '✅ حاضر' : '❌ غائب'}
-                                ${att.massKhadem ? `<span class="text-xs text-gray-600 block sm:inline">(${att.massKhadem})</span>` : ''}
-                            </span>
-                            <span class="text-sm font-medium ${att.meeting ? 'text-green-600 bg-green-100' : 'text-red-500 bg-red-100'} px-2 py-1 rounded-full">
-                                الإجتماع: ${att.meeting ? '✅ حاضر' : '❌ غائب'}
-                                ${att.meetingKhadem ? `<span class="text-xs text-gray-600 block sm:inline">(${att.meetingKhadem})</span>` : ''}
-                            </span>
-                        </div>
-                    </div>
-                `).join('');
+                 listContainer.innerHTML = allAttendance.map(att => {
+                     const massPoints = att.massPoints || 0;
+                     const meetingPoints = att.meetingPoints || 0;
+                     const bonusPoints = att.bonusPoints || 0;
+                     const penaltyPoints = att.penaltyPoints || 0; // NEW: Get penalty points
 
-            }, (error) => {
-                console.error("Error setting up history snapshot listener:", error);
-                listContainer.innerHTML = '<p class="text-red-600 p-4">خطأ في تحميل البيانات.</p>';
-            });
+                     const dailyTotalPoints = massPoints + meetingPoints + bonusPoints - penaltyPoints; // NEW: Calculate total points including penalty
+
+                     // Display Bonus
+                     const bonusDisplay = bonusPoints > 0 ? 
+                          `<div class="mt-1">
+                               <span class="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded-full mr-2">🎁 بونص: +${bonusPoints}</span>
+                               ${att.bonusKhadem ? `<p class="text-xs text-gray-500 mt-1">بواسطة: ${att.bonusKhadem}</p>` : ''}
+                           </div>` : '';
+                    
+                     // NEW: Display Penalty
+                     const penaltyDisplay = penaltyPoints > 0 ? 
+                          `<div class="mt-1">
+                               <span class="text-xs text-penalty bg-red-100 px-2 py-1 rounded-full mr-2">⛔ خصم: -${penaltyPoints}</span>
+                               ${att.penaltyKhadem ? `<p class="text-xs text-gray-500 mt-1">بواسطة: ${att.penaltyKhadem}</p>` : ''}
+                           </div>` : '';
+
+                     const totalPointsHtml = dailyTotalPoints > 0 ? 
+                          `<span class="text-md font-extrabold text-green-700 block sm:inline sm:mr-4">| الإجمالي: ${dailyTotalPoints} نقطة</span>` :
+                          `<span class="text-md font-extrabold text-penalty block sm:inline sm:mr-4">| الإجمالي: ${dailyTotalPoints} نقطة</span>`;
+
+                     
+                     const massKhademDisplay = att.massKhadem ? `<p class="text-xs text-gray-500 mt-1">الخادم: ${att.massKhadem}</p>` : '';
+                     const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500 mt-1">الخادم: ${att.meetingKhadem}</p>` : '';
+
+
+                     return `
+                      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl bg-blue-50 border-r-4 border-blue-400">
+                           <!-- Date and Total Points -->
+                           <div class="mb-2 sm:mb-0">
+                               <span class="font-bold text-lg text-blue-800">${att.id}</span>
+                               ${totalPointsHtml}
+                           </div>
+                           <div class="flex flex-wrap gap-4 items-center">
+                               <!-- Mass Status and Points -->
+                               <div class="flex flex-col items-center">
+                                   <span class="text-sm font-medium ${att.mass ? 'text-green-600 bg-green-100' : 'text-red-500 bg-red-100'} px-2 py-1 rounded-full">
+                                        القداس: ${att.mass ? '✅ حاضر' : '❌ غائب'} (+${massPoints})
+                                   </span>
+                                   ${massKhademDisplay}
+                               </div>
+                               <!-- Meeting Status and Points -->
+                               <div class="flex flex-col items-center">
+                                   <span class="text-sm font-medium ${att.meeting ? 'text-green-600 bg-green-100' : 'text-red-500 bg-red-100'} px-2 py-1 rounded-full">
+                                        الإجتماع: ${att.meeting ? '✅ حاضر' : '❌ غائب'} (+${meetingPoints})
+                                   </span>
+                                   ${meetingKhademDisplay}
+                               </div>
+                               ${bonusDisplay}
+                               ${penaltyDisplay} <!-- NEW: Show Penalty info -->
+                           </div>
+                       </div>
+                   `}).join('');
+
+             }, (error) => {
+                 console.error("Error setting up history snapshot listener:", error);
+                 listContainer.innerHTML = '<p class="text-red-600 p-4">خطأ في تحميل البيانات.</p>';
+             });
         }
 
 
         // Initialize the app on load
         document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('loading').classList.remove('hidden');
-            initializeAppAndAuth();
+             document.getElementById('loading').classList.remove('hidden');
+             initializeAppAndAuth();
         });
 
     </script>
