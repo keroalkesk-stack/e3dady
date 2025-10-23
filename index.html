@@ -192,6 +192,67 @@
         // Utility delay function
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+        // --- Image Compression/Resizing Utility (NEW) ---
+        /**
+         * Compresses/resizes an image file and converts it to Base64 string.
+         * @param {File} file - The raw image file.
+         * @param {number} maxSizeKB - Target maximum size in KB (approximate).
+         * @returns {Promise<string>} Base64 data URL string.
+         */
+        function compressImage(file, maxSizeKB) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Set a target maximum dimension (e.g., 600px for a profile pic)
+                        const MAX_DIM = 600; 
+                        let width = img.width;
+                        let height = img.height;
+                        let quality = 0.9; // Start with high quality
+
+                        // Resize if image is too large
+                        if (width > height) {
+                            if (width > MAX_DIM) {
+                                height *= MAX_DIM / width;
+                                width = MAX_DIM;
+                            }
+                        } else {
+                            if (height > MAX_DIM) {
+                                width *= MAX_DIM / height;
+                                height = MAX_DIM;
+                            }
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+                        
+                        // Iteratively decrease quality until size is met or minimum quality is reached
+                        while (dataUrl.length > maxSizeKB * 1024 * 4/3 && quality > 0.1) {
+                            quality -= 0.1;
+                            dataUrl = canvas.toDataURL('image/jpeg', quality);
+                            console.log(`Image size still too big, reducing quality to ${quality.toFixed(1)}`);
+                        }
+                        
+                        // Final check: if still too big, use the compressed result anyway,
+                        // otherwise, use the initial file data for maximum quality if compression wasn't needed
+                        resolve(dataUrl);
+
+                    };
+                    img.onerror = reject;
+                    img.src = e.target.result;
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+        
         // --- Points Configuration Functions ---
         
         /**
@@ -1158,6 +1219,7 @@
         /**
          * Handles registration form submission and saves data to Firestore.
          * MODIFIED: Checks for rawFile and uploads to Storage, storing the URL in Firestore.
+         * MODIFIED: Uses compressImage for small files to speed up Base64 creation.
          */
         async function handleRegistration(e) {
              e.preventDefault();
@@ -1199,23 +1261,27 @@
                      });
                      childId = docRef.id;
 
-                     let finalPhotoData = registrationChildPhotoBase64; // Default to Base64 (if small) or null
+                     let finalPhotoData = null; 
                      
-                     // 2. Handle Image Upload to Storage if a file was selected
+                     // 2. Handle Image Upload/Compression
                      if (rawPhotoFile) {
-                          // Try Storage upload first for large files (and small ones too, if available)
-                          const uploadResult = await uploadFileToStorage(rawPhotoFile, childId);
+                          const file = rawPhotoFile;
                           
-                          if (uploadResult.url) {
-                              finalPhotoData = uploadResult.url; // Use URL if upload succeeded
-                          } else if (rawPhotoFile.size <= MAX_EMBED_SIZE_BYTES) {
-                              // If Storage failed, fall back to Base64 (which should be pre-loaded in finalPhotoData)
-                              // This is only safe for small files, large files remain null/placeholder on failure.
-                              console.log("Storage upload failed, falling back to Base64.");
+                          // If file is large, upload to storage
+                          if (file.size > MAX_EMBED_SIZE_BYTES) {
+                              const uploadResult = await uploadFileToStorage(file, childId);
+                              if (uploadResult.url) {
+                                  finalPhotoData = uploadResult.url; // Use URL if upload succeeded
+                              }
                           } else {
-                              console.log("Storage upload failed for large file. No image data saved.");
-                              finalPhotoData = null; // Ensure no massive Base64 is saved accidentally
+                              // If file is small, compress and store as Base64 (faster encoding/storage)
+                              // We use compressImage even for small files to guarantee reasonable dimensions/Base64 size
+                              finalPhotoData = await compressImage(file, MAX_EMBED_SIZE_BYTES / 1024);
+                              registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
                           }
+                     } else {
+                         // If no new file was selected, ensure registrationChildPhotoBase64 is cleared
+                         registrationChildPhotoBase64 = null;
                      }
 
                      // 3. Update the document with final photo data and remaining fields
@@ -1224,7 +1290,7 @@
                          parentPhone, 
                          address,     
                          birthdate, 
-                         // Save URL OR Base64 string OR null
+                         // Save URL OR Compressed Base64 string OR null
                          photoBase64: finalPhotoData || null, 
                      });
 
