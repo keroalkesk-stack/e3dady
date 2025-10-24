@@ -503,6 +503,7 @@
                     
                     response = await fetch(url, {
                         method: 'POST',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }, // Added header for compatibility
                         body: formData
                     });
 
@@ -935,9 +936,9 @@
                           </button>
                           <!-- Check History -->
                            <button onclick="navigate('history_search')" class="large-home-btn border-indigo-500 hover:bg-indigo-500 hover:text-white transition duration-200 rounded-xl">
-                               <span class="text-4xl mb-2">📈</span>
-                               <span class="text-xl font-bold">عرض سجل حضوري</span>
-                               <span class="text-sm mt-1">(محتاج كودك الخاص)</span>
+                              <span class="text-4xl mb-2">📈</span>
+                              <span class="text-xl font-bold">عرض سجل حضوري</span>
+                              <span class="text-sm mt-1">(محتاج كودك الخاص)</span>
                            </button>
                       </div>
                       
@@ -953,8 +954,8 @@
          */
         function renderRegisterView(container) {
              const cloudinaryStatusHtml = CLOUDINARY_ACTIVE ? 
-                `<p class="text-xs text-green-400 mt-1">✅ الصور الكبيرة (أكبر من 150ك ب) سيتم رفعها تلقائياً على Cloudinary.</p>` :
-                `<p class="text-xs text-red-400 mt-1">⚠️ لرفع الصور الكبيرة، يجب تهيئة إعدادات Cloudinary في الكود.</p>`;
+                 `<p class="text-xs text-green-400 mt-1">✅ الصور الكبيرة (أكبر من 150ك ب) سيتم رفعها تلقائياً على Cloudinary.</p>` :
+                 `<p class="text-xs text-red-400 mt-1">⚠️ لرفع الصور الكبيرة، يجب تهيئة إعدادات Cloudinary في الكود.</p>`;
 
              container.innerHTML = `
                  <div class="p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
@@ -1492,17 +1493,17 @@
                  
                  // 3. Check if we need Cloudinary or if local Base64 will work
                  if (file.size > MAX_BASE64_SIZE_BYTES) {
-                    if (CLOUDINARY_ACTIVE) {
-                       errorMessage.innerText = `⚠️ حجم الصورة كبير (${Math.round(file.size / 1024)} كيلوبايت). سيتم رفعها تلقائيًا على Cloudinary.`;
-                       errorMessage.classList.remove('hidden');
-                    } else {
-                       errorMessage.innerText = `❌ حجم الصورة كبير (${Math.round(file.size / 1024)} كيلوبايت). يجب تفعيل Cloudinary لرفع الصور الأكبر من 150 كيلوبايت.`;
-                       errorMessage.classList.remove('hidden');
-                       rawPhotoFile = null; // Disable upload if too big and Cloudinary is inactive
-                    }
+                     if (CLOUDINARY_ACTIVE) {
+                        errorMessage.innerText = `⚠️ حجم الصورة كبير (${Math.round(file.size / 1024)} كيلوبايت). سيتم رفعها تلقائيًا على Cloudinary.`;
+                        errorMessage.classList.remove('hidden');
+                     } else {
+                        errorMessage.innerText = `❌ حجم الصورة كبير (${Math.round(file.size / 1024)} كيلوبايت). يجب تفعيل Cloudinary لرفع الصور الأكبر من 150 كيلوبايت.`;
+                        errorMessage.classList.remove('hidden');
+                        rawPhotoFile = null; // Disable upload if too big and Cloudinary is inactive
+                     }
                  } else {
-                    errorMessage.innerText = '✅ سيتم ضغط الصورة وحفظها مع البيانات.';
-                    errorMessage.classList.remove('hidden');
+                      errorMessage.innerText = '✅ سيتم ضغط الصورة وحفظها مع البيانات.';
+                      errorMessage.classList.remove('hidden');
                  }
 
                  // 4. SHOW PREVIEW
@@ -1587,7 +1588,7 @@
 
                  showModal('⚠️ وضع المحاكاة', 'لا يمكن حفظ البيانات! يجب تشغيل التطبيق في بيئة Canvas أو إعداد Firebase يدوياً.', `
                       <p class="text-xs text-red-500 mb-3">
-                            سيتم عرض الـ ID ولكن لن يتم حفظه في قاعدة البيانات.
+                           سيتم عرض الـ ID ولكن لن يتم حفظه في قاعدة البيانات.
                       </p>
                  `);
              } else {
@@ -1607,28 +1608,28 @@
                       
                       // 2. Handle Image Upload/Compression/Storage
                       if (rawPhotoFile) {
-                           const file = rawPhotoFile;
-                           
-                           formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري ضغط الصورة ورفعها...';
+                            const file = rawPhotoFile;
+                            
+                            formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري ضغط الصورة ورفعها...';
 
-                           if (file.size > MAX_BASE64_SIZE_BYTES && CLOUDINARY_ACTIVE) {
-                                // Large file, upload to Cloudinary and get URL
-                                finalPhotoData = await uploadToCloudinary(file, childId);
-                                registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
-                           } else if (file.size <= MAX_BASE64_SIZE_BYTES) {
-                                // Small file, compress locally to Base64
-                                finalPhotoData = await compressImage(file, MAX_BASE64_SIZE_BYTES / 1024);
-                                registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
-                           } else {
-                                // Too big and Cloudinary is inactive
-                                console.warn("Image file is too large for Base64 and Cloudinary is inactive. Skipping photo save.");
-                           }
+                            if (file.size > MAX_BASE64_SIZE_BYTES && CLOUDINARY_ACTIVE) {
+                                 // Large file, upload to Cloudinary and get URL
+                                 finalPhotoData = await uploadToCloudinary(file, childId);
+                                 registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
+                            } else if (file.size <= MAX_BASE64_SIZE_BYTES) {
+                                 // Small file, compress locally to Base64
+                                 finalPhotoData = await compressImage(file, MAX_BASE64_SIZE_BYTES / 1024);
+                                 registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
+                            } else {
+                                 // Too big and Cloudinary is inactive
+                                 console.warn("Image file is too large for Base64 and Cloudinary is inactive. Skipping photo save.");
+                            }
 
-                           // If Cloudinary or Base64 compression failed, finalPhotoData might be null, which is fine.
+                            // If Cloudinary or Base64 compression failed, finalPhotoData might be null, which is fine.
 
                       } else {
-                           // No file selected
-                           registrationChildPhotoBase64 = null;
+                            // No file selected
+                            registrationChildPhotoBase64 = null;
                       }
 
                       // 3. Update the document with final photo data and remaining fields
@@ -1770,8 +1771,8 @@
 
                       // Update the QR Code area structure
                       qrCodeArea.innerHTML = `
-                            <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
-                            <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
+                             <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
+                             <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
                       `;
                       
                       // Generate QR Code 
@@ -1895,7 +1896,7 @@
                       querySnapshot.forEach(docSnap => {
                            // Only add if not already added by ID search and name starts with query
                            if (!docs.some(d => d.id === docSnap.id)) {
-                                 docs.push({ id: docSnap.id, ...docSnap.data() });
+                                docs.push({ id: docSnap.id, ...docSnap.data() });
                            }
                       });
                  }
@@ -1910,35 +1911,35 @@
                       resultsContainer.innerHTML = uniqueDocs.map(child => {
                            // Photo HTML generation for search results
                            const photoHtml = child.photoBase64 
-                                  ? `<img src="${child.photoBase64}" class="w-10 h-10 rounded-full border-2 border-custom-purple ml-3 object-cover flex-shrink-0" alt="صورة المخدوم">`
-                                  : `<div class="w-10 h-10 rounded-full border-2 border-gray-500 ml-3 bg-gray-600 flex items-center justify-center text-gray-300 font-bold text-sm flex-shrink-0">👤</div>`;
+                                   ? `<img src="${child.photoBase64}" class="w-10 h-10 rounded-full border-2 border-custom-purple ml-3 object-cover flex-shrink-0" alt="صورة المخدوم">`
+                                   : `<div class="w-10 h-10 rounded-full border-2 border-gray-500 ml-3 bg-gray-600 flex items-center justify-center text-gray-300 font-bold text-sm flex-shrink-0">👤</div>`;
 
                            return `
                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg hover:bg-gray-800 border-b border-gray-700 transition duration-150 group">
-                               
-                               <!-- Clickable Area for Profile (Photo + Details) -->
-                               <div onclick="navigate('profile', '${child.id}')" class="flex items-center flex-grow min-w-0 cursor-pointer">
-                                       ${photoHtml}
-                                       <div>
-                                           <span class="font-bold text-lg text-white">${child.name}</span>
-                                           <span class="text-sm text-gray-400 block sm:inline-block sm:mr-4">(${child.grade})</span>
-                                           <span class="text-xs font-mono text-custom-purple block mt-1 sm:mt-0">ID: ${child.id}</span>
-                                       </div>
-                               </div>
+                                
+                                <!-- Clickable Area for Profile (Photo + Details) -->
+                                <div onclick="navigate('profile', '${child.id}')" class="flex items-center flex-grow min-w-0 cursor-pointer">
+                                        ${photoHtml}
+                                        <div>
+                                            <span class="font-bold text-lg text-white">${child.name}</span>
+                                            <span class="text-sm text-gray-400 block sm:inline-block sm:mr-4">(${child.grade})</span>
+                                            <span class="text-xs font-mono text-custom-purple block mt-1 sm:mt-0">ID: ${child.id}</span>
+                                        </div>
+                                </div>
 
-                               <!-- Action Buttons Area -->
-                               <div class="flex flex-col sm:flex-row gap-2 mt-2 sm:mt-0 flex-shrink-0">
-                                       <button onclick="quickRecordAttendance('${child.id}', 'mass', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-green-500 text-white hover:bg-green-600 transition" data-type="mass">
-                                           ✅ قداس
-                                       </button>
-                                       <button onclick="quickRecordAttendance('${child.id}', 'meeting', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition" data-type="meeting">
-                                           ✅ إجتماع
-                                       </button>
-                                       <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-full bg-blue-500 text-white hover:bg-blue-600 transition">
-                                           📂 فتح الملف
-                                       </button>
-                               </div>
-                           </div>
+                                <!-- Action Buttons Area -->
+                                <div class="flex flex-col sm:flex-row gap-2 mt-2 sm:mt-0 flex-shrink-0">
+                                        <button onclick="quickRecordAttendance('${child.id}', 'mass', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-green-500 text-white hover:bg-green-600 transition" data-type="mass">
+                                            ✅ قداس
+                                        </button>
+                                        <button onclick="quickRecordAttendance('${child.id}', 'meeting', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition" data-type="meeting">
+                                            ✅ إجتماع
+                                        </button>
+                                        <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-full bg-blue-500 text-white hover:bg-blue-600 transition">
+                                            📂 فتح الملف
+                                        </button>
+                                </div>
+                            </div>
                             `;
                       }).join('');
                  }
@@ -1968,7 +1969,7 @@
              
              const isQuickRecord = button && button.classList.contains('quick-record-btn');
 
-             if (!isQuickRecord) {
+             if (button && !isQuickRecord) {
                  button.disabled = true;
                  const originalText = button.innerHTML;
                  button.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري التسجيل...';
@@ -2021,7 +2022,7 @@
                  showModal('خطأ في التسجيل', `حدث خطأ أثناء محاولة تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'}.`);
                  throw error;
              } finally {
-                 if (!isQuickRecord) {
+                 if (button && !isQuickRecord) {
                       button.disabled = false;
                       button.innerHTML = button.originalText;
                  }
@@ -2034,32 +2035,35 @@
          * @param {string} type - 'mass' or 'meeting'
          */
         window.recordManualAttendance = async function(childId, type) {
-            if (!khademName) {
-                return showModal('التحقق مطلوب', 'الرجاء تسجيل الدخول كخادم أولاً لتسجيل الحضور.');
-            }
+             if (!khademName) {
+                 return showModal('التحقق مطلوب', 'الرجاء تسجيل الدخول كخادم أولاً لتسجيل الحضور.');
+             }
 
-            const dateInput = document.getElementById('manual-date-input');
-            const dateString = dateInput.value;
-            
-            if (!dateString) {
-                return showModal('خطأ', 'الرجاء اختيار تاريخ أولاً.');
-            }
+             const dateInput = document.getElementById('manual-date-input');
+             const dateString = dateInput.value;
+             
+             if (!dateString) {
+                 return showModal('خطأ', 'الرجاء اختيار تاريخ أولاً.');
+             }
 
-            const points = type === 'mass' ? getPointsSettings().massPoints : getPointsSettings().meetingPoints;
-            const buttonId = type === 'mass' ? 'manual-mass-btn' : 'manual-meeting-btn';
-            
-            const buttons = document.querySelectorAll('.primary-btn');
-            buttons.forEach(btn => btn.disabled = true); // Disable all buttons temporarily
+             const points = type === 'mass' ? getPointsSettings().massPoints : getPointsSettings().meetingPoints;
+             const buttonId = type === 'mass' ? 'manual-mass-btn' : 'manual-meeting-btn';
+             
+             const buttons = document.querySelectorAll('.primary-btn');
+             buttons.forEach(btn => btn.disabled = true); // Disable all buttons temporarily
+             
+             const typeArabic = type === 'mass' ? 'القداس' : 'الاجتماع';
 
-            try {
-                // Call the main recording function with the specific date
-                await recordAttendance(childId, type, null, points, dateString);
-            } catch (error) {
-                // Error handling done inside recordAttendance
-            } finally {
-                buttons.forEach(btn => btn.disabled = false); // Re-enable all buttons
-                // No need to change button text since this function doesn't use the button element's innerHTML for progress.
-            }
+             try {
+                 // Call the main recording function with the specific date
+                 await recordAttendance(childId, type, null, points, dateString);
+                 
+             } catch (error) {
+                 // Error handling done inside recordAttendance
+             } finally {
+                 buttons.forEach(btn => btn.disabled = false); // Re-enable all buttons
+                 // We rely on the snapshot listener in the profile view to update the history.
+             }
         }
         
         /**
@@ -2070,7 +2074,7 @@
          */
         window.quickRecordAttendance = async function(childId, type, button) {
              if (!khademName) {
-                  return showModal('التحقق مطلوب', 'الرجاء تسجيل الدخول كخادم أولاً لتسجيل الحضور السريع.');
+                 return showModal('التحقق مطلوب', 'الرجاء تسجيل الدخول كخادم أولاً لتسجيل الحضور السريع.');
              }
              const points = type === 'mass' ? getPointsSettings().massPoints : getPointsSettings().meetingPoints;
              
@@ -2150,7 +2154,7 @@
                   
                   // 2. Update the total points on the main child document
                   await updateDoc(childDocRef, {
-                      totalPoints: increment(points)
+                       totalPoints: increment(points)
                   });
                   
                   showModal('نجاح البونص', `تم إضافة ${points} نقاط بونص بنجاح للمخدوم.`);
@@ -2205,7 +2209,7 @@
                   
                   // 2. Update the total points on the main child document by DECREMENTING
                   await updateDoc(childDocRef, {
-                      totalPoints: increment(-points) // Decrement the total points
+                       totalPoints: increment(-points) // Decrement the total points
                   });
                   
                   showModal('خصم ناجح', `تم خصم ${points} نقاط بنجاح من المخدوم بسبب: ${reason}.`);
@@ -2253,10 +2257,10 @@
                            // Large file: Upload to Cloudinary
                            const uploadUrl = await uploadToCloudinary(file, childId);
                            if (uploadUrl) {
-                                photoData = uploadUrl; // Use the new Cloudinary URL
+                                 photoData = uploadUrl; // Use the new Cloudinary URL
                            } else {
-                               // If Cloudinary failed, keep the old photo data/URL
-                               console.warn("Cloudinary upload failed during edit, keeping old photo data.");
+                                 // If Cloudinary failed, keep the old photo data/URL
+                                console.warn("Cloudinary upload failed during edit, keeping old photo data.");
                            }
                       } else if (file.size <= MAX_BASE64_SIZE_BYTES) {
                            editButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري ضغط الصورة...';
@@ -2268,27 +2272,27 @@
                       }
                   }
                   
-                 const childDocRef = doc(db, getChildrenCollectionPath(), childId);
+                  const childDocRef = doc(db, getChildrenCollectionPath(), childId);
                   
-                  await updateDoc(childDocRef, {
-                      name,
-                      grade,
-                      phone,
-                      parentPhone,
-                      address,
-                      birthdate,
-                      photoBase64: photoData.startsWith('http') || photoData.startsWith('data:image') ? photoData : null // Will update photo URL/Base64
-                  });
+                   await updateDoc(childDocRef, {
+                       name,
+                       grade,
+                       phone,
+                       parentPhone,
+                       address,
+                       birthdate,
+                       photoBase64: photoData.startsWith('http') || photoData.startsWith('data:image') ? photoData : null // Will update photo URL/Base64
+                   });
 
-                  showModal('نجاح التعديل', `تم تحديث بيانات المخدوم: ${name} بنجاح.`);
-                  navigate('profile', childId); // Reload profile view to show changes
+                   showModal('نجاح التعديل', `تم تحديث بيانات المخدوم: ${name} بنجاح.`);
+                   navigate('profile', childId); // Reload profile view to show changes
 
              } catch (error) {
-                  console.error("Error updating child profile:", error);
-                  showModal('خطأ في التعديل', 'حدث خطأ أثناء حفظ التعديلات. الرجاء المحاولة مرة أخرى.');
+                   console.error("Error updating child profile:", error);
+                   showModal('خطأ في التعديل', 'حدث خطأ أثناء حفظ التعديلات. الرجاء المحاولة مرة أخرى.');
              } finally {
-                  editButton.disabled = false;
-                  editButton.innerText = 'حفظ التعديلات';
+                   editButton.disabled = false;
+                   editButton.innerText = 'حفظ التعديلات';
              }
         }
 
@@ -2329,31 +2333,31 @@
                  // Render the table rows
                  listContainer.innerHTML = allChildren.map((child, index) => {
                       const photoHtml = child.photoBase64 
-                             ? `<img src="${child.photoBase64}" class="w-8 h-8 rounded-full border border-gray-500 object-cover ml-2 inline" alt="صورة">`
-                             : `<div class="w-8 h-8 rounded-full border border-gray-500 bg-gray-600 ml-2 inline-flex items-center justify-center text-sm text-gray-400">👤</div>`;
+                               ? `<img src="${child.photoBase64}" class="w-8 h-8 rounded-full border border-gray-500 object-cover ml-2 inline" alt="صورة">`
+                               : `<div class="w-8 h-8 rounded-full border border-gray-500 bg-gray-600 ml-2 inline-flex items-center justify-center text-sm text-gray-400">👤</div>`;
 
                       const registrationDate = child.createdAt ? formatReadableDate(Date.parse(child.createdAt)) : 'غير متاح';
 
                       return `
-                            <tr class="hover:bg-gray-800 transition duration-100">
-                                 <td class="border text-sm font-bold text-gray-400">${index + 1}</td>
-                                 <td class="border text-right whitespace-nowrap text-white">
+                           <tr class="hover:bg-gray-800 transition duration-100">
+                                <td class="border text-sm font-bold text-gray-400">${index + 1}</td>
+                                <td class="border text-right whitespace-nowrap text-white">
                                      <div class="flex items-center justify-end min-w-[150px]">
                                          ${child.name}
                                          ${photoHtml}
                                      </div>
-                                 </td>
-                                 <td class="border text-sm text-gray-400">${child.grade}</td>
-                                 <td class="border text-lg font-extrabold text-custom-purple">${child.totalPoints || 0}</td>
-                                 <td class="border text-base font-semibold text-green-500">${child.massCount}</td>
-                                 <td class="border text-base font-semibold text-indigo-500">${child.meetingCount}</td>
-                                 <td class="border text-xs text-gray-500 whitespace-nowrap">${registrationDate}</td>
-                                 <td class="border">
-                                      <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition">
-                                          ملف المتابعة
-                                      </button>
-                                 </td>
-                            </tr>
+                                </td>
+                                <td class="border text-sm text-gray-400">${child.grade}</td>
+                                <td class="border text-lg font-extrabold text-custom-purple">${child.totalPoints || 0}</td>
+                                <td class="border text-base font-semibold text-green-500">${child.massCount}</td>
+                                <td class="border text-base font-semibold text-indigo-500">${child.meetingCount}</td>
+                                <td class="border text-xs text-gray-500 whitespace-nowrap">${registrationDate}</td>
+                                <td class="border">
+                                     <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition">
+                                         ملف المتابعة
+                                     </button>
+                                </td>
+                           </tr>
                       `;
                  }).join('');
 
@@ -2500,24 +2504,24 @@
 
              container.innerHTML = `
                   <div class="p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto">
-                       <!-- Profile Display Mode -->
-                       <div id="profile-display-mode">
+                        <!-- Profile Display Mode -->
+                        <div id="profile-display-mode">
                             <div class="flex items-start justify-between mb-4 border-b pb-4 border-gray-600">
                                  <div class="flex items-center space-x-4 space-x-reverse">
-                                      <!-- Child Photo Placeholder/Container -->
-                                      <img id="profile-child-photo" src="https://placehold.co/60x60/f0f4f8/94a3b8?text=👤" class="w-16 h-16 rounded-full border-4 border-custom-purple object-cover flex-shrink-0" alt="صورة المخدوم">
-                                      <div>
-                                           <h2 class="text-2xl font-bold text-white">ملف متابعة: <span id="child-name-display" class="text-gray-200">جاري التحميل...</span></h2>
-                                           <!-- Display Child ID/Code -->
-                                           <p class="text-xs font-mono text-gray-400 mt-1">الكود: <span id="child-id-code" class="font-semibold text-custom-purple">${childId}</span></p>
-                                           <p class="text-gray-400">الصف/الخدمة: <span id="child-grade-display" class="font-semibold text-white">...</span></p>
-                                           <p class="text-gray-400">تاريخ الميلاد: <span id="child-birthdate-display" class="font-semibold text-white">...</span></p>
-                                           <p class="text-gray-400">رقم الموبايل: <span id="child-phone-display" class="font-semibold text-white">...</span></p>
-                                           <p class="text-gray-400">رقم ولي الأمر: <span id="child-parent-phone-display" class="font-semibold text-white">...</span></p>
-                                           <p class="text-gray-400">العنوان: <span id="child-address-display" class="font-semibold text-white">...</span></p>
-                                           <!-- Total Points Display -->
-                                           <p class="text-lg font-bold mt-2 text-white">إجمالي النقاط: <span id="child-total-points" class="text-green-400 animate-pulse-points">0</span></p>
-                                      </div>
+                                     <!-- Child Photo Placeholder/Container -->
+                                     <img id="profile-child-photo" src="https://placehold.co/60x60/f0f4f8/94a3b8?text=👤" class="w-16 h-16 rounded-full border-4 border-custom-purple object-cover flex-shrink-0" alt="صورة المخدوم">
+                                     <div>
+                                         <h2 class="text-2xl font-bold text-white">ملف متابعة: <span id="child-name-display" class="text-gray-200">جاري التحميل...</span></h2>
+                                         <!-- Display Child ID/Code -->
+                                         <p class="text-xs font-mono text-gray-400 mt-1">الكود: <span id="child-id-code" class="font-semibold text-custom-purple">${childId}</span></p>
+                                         <p class="text-gray-400">الصف/الخدمة: <span id="child-grade-display" class="font-semibold text-white">...</span></p>
+                                         <p class="text-gray-400">تاريخ الميلاد: <span id="child-birthdate-display" class="font-semibold text-white">...</span></p>
+                                         <p class="text-gray-400">رقم الموبايل: <span id="child-phone-display" class="font-semibold text-white">...</span></p>
+                                         <p class="text-gray-400">رقم ولي الأمر: <span id="child-parent-phone-display" class="font-semibold text-white">...</span></p>
+                                         <p class="text-gray-400">العنوان: <span id="child-address-display" class="font-semibold text-white">...</span></p>
+                                         <!-- Total Points Display -->
+                                         <p class="text-lg font-bold mt-2 text-white">إجمالي النقاط: <span id="child-total-points" class="text-green-400 animate-pulse-points">0</span></p>
+                                     </div>
                                  </div>
                                  <!-- Edit Button -->
                                  <button id="toggle-edit-btn" onclick="loadChildDataAndToggleEdit('${childId}')" class="px-4 py-2 text-sm font-medium rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 transition">تعديل بيانات المخدوم</button>
@@ -2556,11 +2560,11 @@
                                        <label for="edit-photo-file" class="block text-sm font-medium mb-2">تغيير صورة المخدوم (اختياري):</label>
                                        <input type="file" id="edit-photo-file" accept="image/png, image/jpeg" class="w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-custom-purple file:text-white hover:file:bg-purple-700">
                                        ${CLOUDINARY_ACTIVE ? 
-                                          `<p class="text-xs text-green-400 mt-1">✅ الصور الكبيرة سيتم رفعها تلقائياً على Cloudinary.</p>` :
-                                          `<p class="text-xs text-red-400 mt-1">⚠️ Cloudinary غير مُفعل. الصور الكبيرة لن يتم حفظها.</p>`}
-                                   </div>
-                                   <button type="submit" class="w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">حفظ التعديلات</button>
-                                   <button type="button" onclick="toggleEditMode('${childId}', {})" id="cancel-edit-btn" class="w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">إلغاء التعديل</button>
+                                           `<p class="text-xs text-green-400 mt-1">✅ الصور الكبيرة سيتم رفعها تلقائياً على Cloudinary.</p>` :
+                                           `<p class="text-xs text-red-400 mt-1">⚠️ Cloudinary غير مُفعل. الصور الكبيرة لن يتم حفظها.</p>`}
+                                  </div>
+                                  <button type="submit" class="w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">حفظ التعديلات</button>
+                                  <button type="button" onclick="toggleEditMode('${childId}', {})" id="cancel-edit-btn" class="w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">إلغاء التعديل</button>
                              </form>
                         </div>
 
@@ -2572,12 +2576,13 @@
                                 <input type="date" id="manual-date-input" value="${formatDateToDocId(new Date())}" max="${formatDateToDocId(new Date())}" class="w-full px-4 py-2 border rounded-lg focus:ring-custom-purple focus:border-custom-purple">
                             </div>
                             <div class="grid grid-cols-2 gap-4">
+                                <!-- Note: recordManualAttendance calls recordAttendance with the dateString and appropriate points -->
                                 <button onclick="recordManualAttendance('${childId}', 'mass')" class="primary-btn bg-green-600 text-white rounded-lg hover:bg-green-700">✅ تسجيل قداس</button>
                                 <button onclick="recordManualAttendance('${childId}', 'meeting')" class="primary-btn bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">✅ تسجيل اجتماع</button>
                             </div>
                         </div>
 
-                        <h3 class="text-xl font-bold mb-4 border-b pb-2 border-gray-600 text-white">تسجيل حضور اليوم: ${formatDateToDocId(new Date())}</h3>
+                        <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-8 text-white border-gray-600">تسجيل حضور اليوم: ${formatDateToDocId(new Date())}</h3>
                         
                         <!-- Attendance Status and Record Buttons (Today) -->
                         <div id="attendance-status" class="mb-6 p-4 rounded-lg grid grid-cols-2 gap-4 text-center border border-gray-700" style="background-color: rgba(255, 255, 255, 0.1);">
@@ -2635,7 +2640,7 @@
                              <p class="text-gray-400">جارِ تحميل السجل...</p>
                         </div>
                    </div>
-                 `;
+             `;
              
              // Start fetching data and listening for changes
              loadChildProfileAndAttendance(childId);
@@ -2783,29 +2788,29 @@
                       const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
 
                       return `
-                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
-                                 <span class="font-bold text-gray-200">${att.id}</span>
-                                 <div class="flex flex-col items-end sm:items-center">
-                                      ${totalPointsHtml}
-                                      <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
-                                           <div class="flex flex-col items-end">
-                                                <span class="text-sm font-medium ${att.mass ? 'text-green-500' : 'text-red-400'}">
-                                                     القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
-                                                </span>
-                                                ${massKhademDisplay}
-                                           </div>
-                                           <div class="flex flex-col items-end">
-                                                <span class="text-sm font-medium ${att.meeting ? 'text-green-500' : 'text-red-400'}">
-                                                     الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
-                                                </span>
-                                                ${meetingKhademDisplay}
-                                           </div>
-                                      </div>
-                                      ${bonusInfo}
-                                      ${penaltyInfo}
-                                 </div>
-                            </div>
-                            `;
+                           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
+                                <span class="font-bold text-gray-200">${att.id}</span>
+                                <div class="flex flex-col items-end sm:items-center">
+                                     ${totalPointsHtml}
+                                     <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
+                                         <div class="flex flex-col items-end">
+                                              <span class="text-sm font-medium ${att.mass ? 'text-green-500' : 'text-red-400'}">
+                                                   القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
+                                              </span>
+                                              ${massKhademDisplay}
+                                         </div>
+                                         <div class="flex flex-col items-end">
+                                              <span class="text-sm font-medium ${att.meeting ? 'text-green-500' : 'text-red-400'}">
+                                                   الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
+                                              </span>
+                                              ${meetingKhademDisplay}
+                                         </div>
+                                     </div>
+                                     ${bonusInfo}
+                                     ${penaltyInfo}
+                                </div>
+                           </div>
+                      `;
                  }).join('');
 
                  // --- Append Load All Button if count reaches limit (indicates more data exists) ---
@@ -2815,7 +2820,7 @@
                       htmlContent += `
                            <div class="text-center mt-4">
                                  <button onclick="loadFullAttendanceHistory('${childId}', this)" class="primary-btn bg-gray-500 text-white rounded-lg hover:bg-gray-600 text-sm">
-                                      ⬇️ تحميل السجل بالكامل (قد يستغرق وقتاً)
+                                     ⬇️ تحميل السجل بالكامل (قد يستغرق وقتاً)
                                  </button>
                            </div>
                       `;
@@ -2852,7 +2857,8 @@
              
              const attendanceCollectionRef = collection(db, getAttendanceCollectionPath(childId));
              // Get ALL attendance records (no limit)
-             const snapshot = await getDocs(attendanceCollectionRef);
+             const q = query(attendanceCollectionRef, orderBy('date', 'desc')); // Order by date descending without limit
+             const snapshot = await getDocs(q);
              
              const historyContainer = document.getElementById('attendance-history');
              const todayDocId = formatDateToDocId(new Date());
@@ -2862,8 +2868,8 @@
                  allAttendance.push({ id: doc.id, ...doc.data() });
              });
              
-             // Sort to ensure all history is properly ordered
-             allAttendance.sort((a, b) => b.id.localeCompare(a.id));
+             // Sort to ensure all history is properly ordered (already done by query)
+             // allAttendance.sort((a, b) => b.id.localeCompare(a.id));
 
              if (allAttendance.length === 0) {
                   historyContainer.innerHTML = '<p class="text-gray-400 p-4">لم يتم تسجيل أي حضور حتى الآن.</p>';
@@ -2895,30 +2901,33 @@
                       const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
 
                       return `
-                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
-                                 <span class="font-bold text-gray-200">${att.id}</span>
-                                 <div class="flex flex-col items-end sm:items-center">
-                                      ${totalPointsHtml}
-                                      <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
-                                           <div class="flex flex-col items-end">
-                                                <span class="text-sm font-medium ${att.mass ? 'text-green-500' : 'text-red-400'}">
-                                                     القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
-                                                </span>
-                                                ${massKhademDisplay}
-                                           </div>
-                                           <div class="flex flex-col items-end">
-                                                <span class="text-sm font-medium ${att.meeting ? 'text-green-500' : 'text-red-400'}">
-                                                     الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
-                                                </span>
-                                                ${meetingKhademDisplay}
-                                           </div>
-                                      </div>
-                                      ${bonusInfo}
-                                      ${penaltyInfo}
-                                 </div>
-                            </div>
-                            `;
+                           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
+                                <span class="font-bold text-gray-200">${att.id}</span>
+                                <div class="flex flex-col items-end sm:items-center">
+                                     ${totalPointsHtml}
+                                     <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
+                                         <div class="flex flex-col items-end">
+                                              <span class="text-sm font-medium ${att.mass ? 'text-green-500' : 'text-red-400'}">
+                                                   القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
+                                              </span>
+                                              ${massKhademDisplay}
+                                         </div>
+                                         <div class="flex flex-col items-end">
+                                              <span class="text-sm font-medium ${att.meeting ? 'text-green-500' : 'text-red-400'}">
+                                                   الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
+                                              </span>
+                                              ${meetingKhademDisplay}
+                                         </div>
+                                     </div>
+                                     ${bonusInfo}
+                                     ${penaltyInfo}
+                                </div>
+                           </div>
+                       `;
              }).join('');
+             
+             // Remove the button now that all history is loaded
+             button.remove();
         }
 
 
@@ -3005,18 +3014,18 @@
                                 <!-- Total Points Display for Makhdoum -->
                                 <p class="text-lg font-bold mt-2 text-white">إجمالي النقاط: <span id="child-history-total-points" class="text-green-400 animate-pulse-points">0</span></p>
                            </div>
-                       </div>
+                      </div>
 
-                            <h3 class="text-xl font-bold mb-4 text-white">تفاصيل الحضور</h3>
-                            <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto p-2 border border-gray-700 rounded-lg" style="background-color: rgba(0, 0, 0, 0.3);">
+                           <h3 class="text-xl font-bold mb-4 text-white">تفاصيل الحضور</h3>
+                           <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto p-2 border border-gray-700 rounded-lg" style="background-color: rgba(0, 0, 0, 0.3);">
                                  <p class="text-gray-400">جارِ تحميل السجل...</p>
-                            </div>
-                            <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">🔍 بحث عن كود آخر</button>
+                           </div>
+                           <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">🔍 بحث عن كود آخر</button>
                       </div>
                   `;
-             
-             // Load and listen for data
-             loadChildHistory(childId);
+              
+              // Load and listen for data
+              loadChildHistory(childId);
         }
 
         /**
@@ -3113,7 +3122,7 @@
 
 
                       return `
-                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl border-r-4 border-indigo-400" style="background-color: rgba(67, 56, 202, 0.1);">
+                           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl border-r-4 border-indigo-400" style="background-color: rgba(67, 56, 202, 0.1);">
                                  <!-- Date and Total Points -->
                                  <div class="mb-2 sm:mb-0">
                                       <span class="font-bold text-lg text-white">${att.id}</span>
@@ -3137,8 +3146,8 @@
                                       ${bonusDisplay}
                                       ${penaltyDisplay} <!-- NEW: Show Penalty info -->
                                  </div>
-                            </div>
-                            `}).join('');
+                           </div>
+                           `}).join('');
 
              }, (error) => {
                  console.error("Error setting up history snapshot listener:", error);
