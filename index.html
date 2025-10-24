@@ -336,20 +336,18 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, where, increment, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // NEW: Firebase Storage Imports
-        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global Firebase variables
-        let app, db, auth, storage, userId; // Added storage
+        let app, db, auth, userId; 
         let currentPage = 'welcome'; // CHANGE: Start on the new welcome screen
         let currentChildId = null; 
         let isFirebaseActive = localStorage.getItem('isFirebaseActive') === 'true' || false;
         let khademName = localStorage.getItem('khademName') || null; // Load Khadem name from local storage
         let registrationQrId = null; // Store the child ID after registration for download/copy
         let registrationChildName = null; // Store the child name for file download naming
-        let registrationChildPhotoBase64 = null; // Store the photo Base64 string OR the Storage URL
-        let rawPhotoFile = null; // NEW: Store the raw File object for large image upload
+        let registrationChildPhotoBase64 = null; // Store the photo Base64 string OR the Cloudinary URL (The URL works on canvas too)
+        let rawPhotoFile = null; // Store the raw File object 
         let currentPointsSettings = { massPoints: 10, meetingPoints: 5 }; // Global variable for points settings
         
         // --- SERVICE CONSTANTS (Customization for Biba St. George) ---
@@ -358,14 +356,23 @@
         const SERVICE_TITLE = "خدمة فتيان إعدادي كنيسة مارجرجس ببا";
         const TITLE_COLOR = '#006400'; // Dark Green (A common Coptic color alternative)
         const BORDER_COLOR = '#6B46C1'; // Custom Purple (Coptic color)
-        // Image URL for the logo (St. George image from placehold.co)
-        // FIX: Changed to a relative path. Please upload the image file to the same directory under this name.
         const SERVICE_LOGO_URL = "./st_george_logo.png"; 
 
         // Constants for image size handling
-        const MAX_EMBED_SIZE_BYTES = 150 * 1024; // 150 KB max size for Base64 embedding in Firestore
+        // Max size for local compression + embedding in Firestore (Base64 string)
+        const MAX_BASE64_SIZE_BYTES = 150 * 1024; // 150 KB max size for Base64 embedding in Firestore
+        // Max size for any file accepted by the form before routing to Cloudinary
+        const MAX_FILE_SIZE_MB = 10;
+        const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
-
+        // --- CLOUDINARY CONFIGURATION (NEW) ---
+        // ⚠️ تم التحديث بناءً على الاسم اللي اخترته
+        const CLOUDINARY_CONFIG = {
+            cloudName: "dzqv9ev5a", 
+            uploadPreset: "stgeorge_profiles", 
+        };
+        const CLOUDINARY_ACTIVE = CLOUDINARY_CONFIG.cloudName !== "YOUR_CLOUD_NAME_HERE" && CLOUDINARY_CONFIG.uploadPreset !== "MUST_UPDATE_YOUR_UPLOAD_PRESET";
+        
         // --- Firebase Setup Handling ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
@@ -403,9 +410,10 @@
         // Utility delay function
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-        // --- Image Compression/Resizing Utility (NEW) ---
+        // --- Image Compression/Resizing Utility (UNCHANGED) ---
         /**
-         * Compresses/resizes an image file and converts it to Base64 string.
+         * Compresses/resizes an image file and converts it to Base64 string (client-side).
+         * Used for small images or fallback when Cloudinary is unavailable.
          * @param {File} file - The raw image file.
          * @param {number} maxSizeKB - Target maximum size in KB (approximate).
          * @returns {Promise<string>} Base64 data URL string.
@@ -419,13 +427,11 @@
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         
-                        // Set a target maximum dimension (e.g., 600px for a profile pic)
                         const MAX_DIM = 600; 
                         let width = img.width;
                         let height = img.height;
                         let quality = 0.7; // Changed from 0.9 to 0.7 for aggressive compression
 
-                        // Resize if image is too large
                         if (width > height) {
                             if (width > MAX_DIM) {
                                 height *= MAX_DIM / width;
@@ -444,15 +450,12 @@
 
                         let dataUrl = canvas.toDataURL('image/jpeg', quality);
                         
-                        // Iteratively decrease quality until size is met or minimum quality is reached
                         while (dataUrl.length > maxSizeKB * 1024 * 4/3 && quality > 0.1) {
                             quality -= 0.1;
                             dataUrl = canvas.toDataURL('image/jpeg', quality);
                             console.log(`Image size still too big, reducing quality to ${quality.toFixed(1)}`);
                         }
                         
-                        // Final check: if still too big, use the compressed result anyway,
-                        // otherwise, use the initial file data for maximum quality if compression wasn't needed
                         resolve(dataUrl);
 
                     };
@@ -464,20 +467,78 @@
             });
         }
         
-        // --- Points Configuration Functions ---
-        
+        // --- NEW: Cloudinary Upload Function (FIXED FOR UNSIGNED EAGER) ---
         /**
-         * @returns {string} The document path for the points configuration settings.
+         * Uploads the raw file object to Cloudinary and returns an optimized URL.
+         * @param {File} file - The raw file object to upload.
+         * @param {string} childId - The ID to use for the storage path/public_id.
+         * @returns {Promise<string|null>} The secure optimized URL or null on failure.
          */
-        function getSettingsDocPath() {
-             return `artifacts/${appId}/public/data/points_config/current_settings`;
-        }
+        async function uploadToCloudinary(file, childId) {
+            if (!CLOUDINARY_ACTIVE) {
+                console.error("Cloudinary is not configured. Falling back to local Base64 attempt.");
+                return null;
+            }
 
-        /**
-         * Returns the current points settings (massPoints and meetingPoints).
-         */
-        function getPointsSettings() {
-            return currentPointsSettings;
+            const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/image/upload`;
+            const formData = new FormData();
+            
+            formData.append('file', file);
+            formData.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
+            formData.append('folder', 'stgeorge_profiles'); 
+            
+            // NOTE: The 'eager' parameter causes Status: 400 with unsigned upload, 
+            // so we remove it and apply the transformation manually to the resulting URL.
+            // const eagerTransformations = 'w_600,h_600,c_fill,q_auto:best'; 
+            // formData.append('eager', eagerTransformations);
+
+            try {
+                // Implementing exponential backoff for the external API call
+                const maxRetries = 3;
+                let attempt = 0;
+                let response;
+
+                while (attempt < maxRetries) {
+                    await delay(attempt > 0 ? 2 ** attempt * 1000 : 0); // Exponential backoff
+                    
+                    response = await fetch(url, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        break;
+                    }
+                    attempt++;
+                }
+
+                if (!response || !response.ok) {
+                    // Log the error body if available for better debugging
+                    const errorBody = await response.text();
+                    console.error("Cloudinary failed response body:", errorBody);
+                    throw new Error(`Cloudinary upload failed after ${maxRetries} attempts. Status: ${response?.status}`);
+                }
+                
+                const result = await response.json();
+                
+                // Construct the transformed URL manually
+                // Transformation: w_150,h_150,c_fill (Crop to 150x150, fill crop) for profile pic size
+                const baseSecureUrl = result.secure_url;
+                if (!baseSecureUrl) {
+                    return null;
+                }
+                
+                // Insert transformation string "c_fill,h_150,w_150,q_auto:best" before /v<version>/<public_id>
+                const urlParts = baseSecureUrl.split('/upload/');
+                const transformedUrl = `${urlParts[0]}/upload/c_fill,h_150,w_150,q_auto:best/${urlParts[1]}`;
+
+                return transformedUrl; 
+
+            } catch (error) {
+                console.error("Error uploading to Cloudinary:", error);
+                showModal('خطأ في الرفع السحابي', `حدث خطأ أثناء رفع الصورة إلى Cloudinary. سيتم حفظ بياناتك بدون صورة. (${error.message})`);
+                return null;
+            }
         }
 
 
@@ -504,8 +565,8 @@
                 // 1. Initialize App and Services
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
-                auth = getAuth(app);
-                // FIX: Removed storage = getStorage(app); from here to prevent early initialization errors.
+                // FIX: Changed 'cauth' back to 'auth'
+                auth = getAuth(app); 
                 
                 let user;
 
@@ -694,47 +755,20 @@
             document.getElementById('modal-backdrop').classList.add('hidden');
         }
 
+        
         /**
-         * NEW: Uploads the raw file object to Firebase Storage.
-         * MODIFIED: RE-ENABLED STORAGE UPLOAD.
-         * @param {File} file - The raw file object to upload.
-         * @param {string} childId - The ID to use for the storage path.
-         * @returns {Promise<{url: string|null, error: Error|null}>}
+         * @returns {string} The document path for the points configuration settings.
          */
-        async function uploadFileToStorage(file, childId) {
-            // Check if storage has been initialized (it's not global anymore)
-            if (!storage) {
-                storage = getStorage(app);
-            }
-
-            // FIX: Check if auth is ready before attempting upload
-            if (!file || !isFirebaseActive || !auth.currentUser) {
-                return { url: null, error: new Error("No file, Firebase inactive, or user unauthorized for Storage.") };
-            }
-
-            try {
-                // Define the storage path: images/appId/childId/profile.jpg
-                const fileExtension = file.name.split('.').pop();
-                const storagePath = `images/${appId}/${childId}/profile.${fileExtension}`;
-                const imageRef = ref(storage, storagePath);
-
-                // Upload the file
-                const snapshot = await uploadBytes(imageRef, file);
-                
-                // Get the permanent download URL
-                const downloadURL = await getDownloadURL(snapshot.ref);
-
-                console.log("File uploaded successfully, URL:", downloadURL);
-                return { url: downloadURL, error: null };
-
-            } catch (error) {
-                console.error("Error uploading file to storage:", error);
-                // Important message for the user to debug rules
-                showModal('خطأ في الرفع', 'حدث خطأ أثناء رفع الصورة إلى السحابة. (تأكد من تطبيق قواعد الأمان في Storage). سيتم حفظ بياناتك بدون صورة.');
-                return { url: null, error };
-            }
+        function getSettingsDocPath() {
+             return `artifacts/${appId}/public/data/points_config/current_settings`;
         }
-
+        
+        /**
+         * Returns the current points settings (massPoints and meetingPoints).
+         */
+        function getPointsSettings() {
+            return currentPointsSettings;
+        }
 
         // --- Rendering Functions ---
 
@@ -918,6 +952,10 @@
          * Renders the registration form.
          */
         function renderRegisterView(container) {
+             const cloudinaryStatusHtml = CLOUDINARY_ACTIVE ? 
+                `<p class="text-xs text-green-400 mt-1">✅ الصور الكبيرة (أكبر من 150ك ب) سيتم رفعها تلقائياً على Cloudinary.</p>` :
+                `<p class="text-xs text-red-400 mt-1">⚠️ لرفع الصور الكبيرة، يجب تهيئة إعدادات Cloudinary في الكود.</p>`;
+
              container.innerHTML = `
                  <div class="p-6 sm:p-8 rounded-xl card max-w-lg mx-auto">
                       <h2 class="text-2xl font-bold mb-6 text-white border-b pb-2">استمارة تسجيل مخدوم جديد</h2>
@@ -954,6 +992,7 @@
                           <div class="border p-4 rounded-lg" style="background-color: rgba(255, 255, 255, 0.1);">
                               <label for="photo-file" class="block text-sm font-medium mb-2">صورة المخدوم (اختياري، يفضل صورة شخصية):</label>
                               <input type="file" id="photo-file" accept="image/png, image/jpeg" class="w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-custom-purple file:text-white hover:file:bg-purple-700">
+                              ${cloudinaryStatusHtml}
                               <div id="photo-preview-container" class="mt-3 text-center">
                                   <div id="photo-preview" class="w-20 h-20 bg-gray-600 rounded-full mx-auto hidden border-2 border-custom-purple" style="background-size: cover; background-position: center;"></div>
                                   <p id="photo-error-message" class="text-xs text-red-400 mt-1 hidden"></p>
@@ -1284,7 +1323,6 @@
              const QR_SIZE = 200; // Size of the QR code canvas (fixed from qrcode.js)
              const INNER_PADDING = 15; // Padding inside the drawing area
              const CARD_PADDING = 15; // Padding outside the drawing area / inside the frame
-             // NOTE: TEXT_HEIGHT is now calculated dynamically, setting a max card height
              const BORDER_THICKNESS = 8; // Increased border thickness for better visual
              const PHOTO_SIZE = 60; // Size for the circular photo
              const TITLE_HEIGHT = 50; // Estimated height for the wrapped title
@@ -1330,6 +1368,11 @@
              const drawPhoto = (callback, currentY) => {
                  if (registrationChildPhotoBase64) {
                      const img = new Image();
+                     // Cross-origin for external URLs like Cloudinary
+                     if (registrationChildPhotoBase64.startsWith('http')) {
+                          img.crossOrigin = "Anonymous";
+                     }
+
                      img.onload = function() {
                          // Position photo centered horizontally relative to content width
                          const PHOTO_X = (newCanvasWidth - PHOTO_SIZE) / 2;
@@ -1351,7 +1394,7 @@
                      };
                      img.onerror = function() {
                           console.warn("Failed to load user image for QR card. Drawing card without photo.");
-                          callback(currentY + PHOTO_SIZE + MARGIN); 
+                          callback(currentY + MARGIN); // Just add margin if photo fails to load
                      };
                      img.src = registrationChildPhotoBase64;
                  } else {
@@ -1422,38 +1465,47 @@
         }
 
         /**
-         * Handles local file selection for preview and conversion to Base64/Store raw file.
-         * MODIFIED: Stores the raw file only, relies on handleRegistration for compression/Base64.
+         * Handles local file selection for preview and storing the raw file.
+         * MODIFIED: Now accepts large files, showing a warning if size exceeds Base64 limit.
          */
         function previewPhoto(event) {
              const file = event.target.files[0];
              const preview = document.getElementById('photo-preview');
              const errorMessage = document.getElementById('photo-error-message');
              
-             registrationChildPhotoBase64 = null; // Reset Base64/URL field
+             registrationChildPhotoBase64 = null; // Reset saved photo data/URL
              rawPhotoFile = null; // Reset raw file field
              preview.classList.add('hidden'); // Hide preview until validation passes
+             errorMessage.classList.add('hidden');
              
              if (file) {
-                 // 1. VALIDATION: Check file size immediately
-                 if (file.size > MAX_EMBED_SIZE_BYTES) {
-                     rawPhotoFile = null; // Deny storing the file
-                     errorMessage.innerText = `❌ حجم الصورة كبير جداً (${Math.round(file.size / 1024)} كيلوبايت). الحد الأقصى المسموح به هو 150 كيلوبايت. يرجى اختيار صورة أصغر.`;
-                     errorMessage.classList.remove('hidden');
-                     // Clear file input to prevent resubmission
-                     event.target.value = null;
-                     return; 
+                 // 1. Check Max Size limit for any upload (10MB)
+                 if (file.size > MAX_FILE_SIZE_BYTES) {
+                      errorMessage.innerText = `❌ حجم الصورة كبير جداً (${Math.round(file.size / 1024 / 1024)} ميجابايت). الحد الأقصى المسموح به هو ${MAX_FILE_SIZE_MB} ميجابايت.`;
+                      errorMessage.classList.remove('hidden');
+                      event.target.value = null;
+                      return;
                  }
                  
-                 // 2. FILE IS ACCEPTABLE SIZE: Store the raw file object 
+                 // 2. Store the raw file object for later handling
                  rawPhotoFile = file; 
-                 errorMessage.classList.add('hidden');
                  
-                 // 3. SHOW PREVIEW & STATUS MESSAGE
-                 errorMessage.innerText = '✅ سيتم ضغط الصورة وحفظها عند التسجيل.';
-                 errorMessage.classList.remove('hidden');
-                 
-                 // Preview using the FileReader temporarily just for the immediate visual feedback 
+                 // 3. Check if we need Cloudinary or if local Base64 will work
+                 if (file.size > MAX_BASE64_SIZE_BYTES) {
+                    if (CLOUDINARY_ACTIVE) {
+                       errorMessage.innerText = `⚠️ حجم الصورة كبير (${Math.round(file.size / 1024)} كيلوبايت). سيتم رفعها تلقائيًا على Cloudinary.`;
+                       errorMessage.classList.remove('hidden');
+                    } else {
+                       errorMessage.innerText = `❌ حجم الصورة كبير (${Math.round(file.size / 1024)} كيلوبايت). يجب تفعيل Cloudinary لرفع الصور الأكبر من 150 كيلوبايت.`;
+                       errorMessage.classList.remove('hidden');
+                       rawPhotoFile = null; // Disable upload if too big and Cloudinary is inactive
+                    }
+                 } else {
+                    errorMessage.innerText = '✅ سيتم ضغط الصورة وحفظها مع البيانات.';
+                    errorMessage.classList.remove('hidden');
+                 }
+
+                 // 4. SHOW PREVIEW
                  const tempReader = new FileReader();
                  tempReader.onload = function(e) {
                       preview.style.backgroundImage = `url(${e.target.result})`;
@@ -1510,16 +1562,15 @@
 
         /**
          * Handles registration form submission and saves data to Firestore.
-         * MODIFIED: Checks for rawFile and uploads to Storage, storing the URL in Firestore.
-         * MODIFIED: Uses compressImage for small files to speed up Base64 creation.
+         * MODIFIED: Uses Cloudinary for large files, Base64 for small files.
          */
         async function handleRegistration(e) {
              e.preventDefault();
              const name = document.getElementById('name').value.trim();
              const grade = document.getElementById('grade').value.trim();
              const phone = document.getElementById('phone').value.trim();
-             const parentPhone = document.getElementById('parent-phone').value.trim(); // NEW
-             const address = document.getElementById('address').value.trim(); // NEW
+             const parentPhone = document.getElementById('parent-phone').value.trim(); 
+             const address = document.getElementById('address').value.trim(); 
              const birthdate = document.getElementById('birthdate').value.trim(); 
              
              // Store name globally for file download function
@@ -1529,7 +1580,7 @@
              formButton.disabled = true;
              formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الحفظ...';
              
-             let childId; // No temp ID needed if we let Firestore generate it first
+             let childId; 
 
              if (!isFirebaseActive) {
                  childId = 'MOCK-ID-' + Math.random().toString(36).substring(2, 9).toUpperCase();
@@ -1541,55 +1592,56 @@
                  `);
              } else {
                  try {
-                     // 1. First, create the document to get the unique Firestore ID
-                     const docRef = await addDoc(collection(db, getChildrenCollectionPath()), {
-                          // Temporary data structure for the first save
-                          name,
-                          grade,
-                          totalPoints: 0, 
-                          massTotalCount: 0, 
-                          meetingTotalCount: 0, 
-                          createdAt: new Date().toISOString(), 
-                     });
-                     childId = docRef.id;
+                      // 1. First, create the document to get the unique Firestore ID
+                      const docRef = await addDoc(collection(db, getChildrenCollectionPath()), {
+                           name,
+                           grade,
+                           totalPoints: 0, 
+                           massTotalCount: 0, 
+                           meetingTotalCount: 0, 
+                           createdAt: new Date().toISOString(), 
+                      });
+                      childId = docRef.id;
 
-                     let finalPhotoData = null; 
-                     
-                     // 2. Handle Image Upload/Compression
-                     if (rawPhotoFile) {
-                          const file = rawPhotoFile;
-                          
-                          // Update loading status for the user
-                          formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري ضغط الصورة ورفعها...';
+                      let finalPhotoData = null; 
+                      
+                      // 2. Handle Image Upload/Compression/Storage
+                      if (rawPhotoFile) {
+                           const file = rawPhotoFile;
+                           
+                           formButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري ضغط الصورة ورفعها...';
 
-                          // NOTE: Since previewPhoto now blocks > 150KB, this branch should theoretically never be hit, 
-                          // but we keep the logic for future flexibility (e.g. if MAX_EMBED is changed to use Storage later)
-                          if (file.size > MAX_EMBED_SIZE_BYTES) { 
-                               const uploadResult = await uploadFileToStorage(file, childId);
-                               if (uploadResult.url) {
-                                    finalPhotoData = uploadResult.url; // Use URL if upload succeeded
-                               }
-                          } else {
-                               // If file is small, compress and store as Base64 
-                               finalPhotoData = await compressImage(file, MAX_EMBED_SIZE_BYTES / 1024);
-                               registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
-                          }
-                     } else {
-                          // If no new file was selected, ensure registrationChildPhotoBase64 is cleared
-                          registrationChildPhotoBase64 = null;
-                     }
+                           if (file.size > MAX_BASE64_SIZE_BYTES && CLOUDINARY_ACTIVE) {
+                                // Large file, upload to Cloudinary and get URL
+                                finalPhotoData = await uploadToCloudinary(file, childId);
+                                registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
+                           } else if (file.size <= MAX_BASE64_SIZE_BYTES) {
+                                // Small file, compress locally to Base64
+                                finalPhotoData = await compressImage(file, MAX_BASE64_SIZE_BYTES / 1024);
+                                registrationChildPhotoBase64 = finalPhotoData; // Update global state for QR download
+                           } else {
+                                // Too big and Cloudinary is inactive
+                                console.warn("Image file is too large for Base64 and Cloudinary is inactive. Skipping photo save.");
+                           }
 
-                     // 3. Update the document with final photo data and remaining fields
-                     await updateDoc(doc(db, getChildrenCollectionPath(), childId), {
-                          phone,
-                          parentPhone, 
-                          address, 
-                          birthdate, 
-                          // Save URL OR Compressed Base64 string OR null
-                          photoBase64: finalPhotoData || null, 
-                     });
+                           // If Cloudinary or Base64 compression failed, finalPhotoData might be null, which is fine.
 
-                     showModal('نجاح التسجيل', 'تم تسجيل بياناتك بنجاح! احفظ الكود الظاهر لتسجيل الحضور.');
+                      } else {
+                           // No file selected
+                           registrationChildPhotoBase64 = null;
+                      }
+
+                      // 3. Update the document with final photo data and remaining fields
+                      await updateDoc(doc(db, getChildrenCollectionPath(), childId), {
+                           phone,
+                           parentPhone, 
+                           address, 
+                           birthdate, 
+                           // Save URL OR Compressed Base64 string OR null
+                           photoBase64: finalPhotoData || null, 
+                      });
+
+                      showModal('نجاح التسجيل', 'تم تسجيل بياناتك بنجاح! احفظ الكود الظاهر لتسجيل الحضور.');
 
                  } catch (error) {
                       console.error("Error saving child data: ", error);
@@ -1718,8 +1770,8 @@
 
                       // Update the QR Code area structure
                       qrCodeArea.innerHTML = `
-                           <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
-                           <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
+                            <div id="found-qrcode-canvas" class="mx-auto" style="width:200px; height:200px;"></div>
+                            <p class="mt-4 text-xs font-mono break-all text-gray-600">${childId}</p>
                       `;
                       
                       // Generate QR Code 
@@ -1843,7 +1895,7 @@
                       querySnapshot.forEach(docSnap => {
                            // Only add if not already added by ID search and name starts with query
                            if (!docs.some(d => d.id === docSnap.id)) {
-                                docs.push({ id: docSnap.id, ...docSnap.data() });
+                                 docs.push({ id: docSnap.id, ...docSnap.data() });
                            }
                       });
                  }
@@ -1858,33 +1910,33 @@
                       resultsContainer.innerHTML = uniqueDocs.map(child => {
                            // Photo HTML generation for search results
                            const photoHtml = child.photoBase64 
-                                   ? `<img src="${child.photoBase64}" class="w-10 h-10 rounded-full border-2 border-custom-purple ml-3 object-cover flex-shrink-0" alt="صورة المخدوم">`
-                                   : `<div class="w-10 h-10 rounded-full border-2 border-gray-500 ml-3 bg-gray-600 flex items-center justify-center text-gray-300 font-bold text-sm flex-shrink-0">👤</div>`;
+                                  ? `<img src="${child.photoBase64}" class="w-10 h-10 rounded-full border-2 border-custom-purple ml-3 object-cover flex-shrink-0" alt="صورة المخدوم">`
+                                  : `<div class="w-10 h-10 rounded-full border-2 border-gray-500 ml-3 bg-gray-600 flex items-center justify-center text-gray-300 font-bold text-sm flex-shrink-0">👤</div>`;
 
                            return `
                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg hover:bg-gray-800 border-b border-gray-700 transition duration-150 group">
                                
                                <!-- Clickable Area for Profile (Photo + Details) -->
                                <div onclick="navigate('profile', '${child.id}')" class="flex items-center flex-grow min-w-0 cursor-pointer">
-                                    ${photoHtml}
-                                    <div>
-                                        <span class="font-bold text-lg text-white">${child.name}</span>
-                                        <span class="text-sm text-gray-400 block sm:inline-block sm:mr-4">(${child.grade})</span>
-                                        <span class="text-xs font-mono text-custom-purple block mt-1 sm:mt-0">ID: ${child.id}</span>
-                                    </div>
+                                       ${photoHtml}
+                                       <div>
+                                           <span class="font-bold text-lg text-white">${child.name}</span>
+                                           <span class="text-sm text-gray-400 block sm:inline-block sm:mr-4">(${child.grade})</span>
+                                           <span class="text-xs font-mono text-custom-purple block mt-1 sm:mt-0">ID: ${child.id}</span>
+                                       </div>
                                </div>
 
                                <!-- Action Buttons Area -->
                                <div class="flex flex-col sm:flex-row gap-2 mt-2 sm:mt-0 flex-shrink-0">
-                                    <button onclick="quickRecordAttendance('${child.id}', 'mass', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-green-500 text-white hover:bg-green-600 transition" data-type="mass">
-                                        ✅ قداس
-                                    </button>
-                                    <button onclick="quickRecordAttendance('${child.id}', 'meeting', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition" data-type="meeting">
-                                        ✅ إجتماع
-                                    </button>
-                                    <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-full bg-blue-500 text-white hover:bg-blue-600 transition">
-                                        📂 فتح الملف
-                                    </button>
+                                       <button onclick="quickRecordAttendance('${child.id}', 'mass', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-green-500 text-white hover:bg-green-600 transition" data-type="mass">
+                                           ✅ قداس
+                                       </button>
+                                       <button onclick="quickRecordAttendance('${child.id}', 'meeting', this)" class="quick-record-btn px-3 py-1 text-xs font-medium rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition" data-type="meeting">
+                                           ✅ إجتماع
+                                       </button>
+                                       <button onclick="navigate('profile', '${child.id}')" class="px-3 py-1 text-xs font-medium rounded-full bg-blue-500 text-white hover:bg-blue-600 transition">
+                                           📂 فتح الملف
+                                       </button>
                                </div>
                            </div>
                             `;
@@ -1907,8 +1959,9 @@
          * @param {string} type - 'mass' or 'meeting'
          * @param {HTMLElement} button 
          * @param {number} points - Points to award for this action
+         * @param {string} [dateString=formatDateToDocId(new Date())] - Date string (YYYY-MM-DD) for attendance record.
          */
-        window.recordAttendance = async function(childId, type, button, points = 0) {
+        window.recordAttendance = async function(childId, type, button, points = 0, dateString = formatDateToDocId(new Date())) {
              if (!khademName) {
                  throw new Error('Khadem not verified.');
              }
@@ -1923,26 +1976,26 @@
              }
 
 
-             const todayDocId = formatDateToDocId(new Date());
-             const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), todayDocId);
+             const docId = dateString;
+             const attendanceDocRef = doc(db, getAttendanceCollectionPath(childId), docId);
              const childDocRef = doc(db, getChildrenCollectionPath(), childId); // Reference to the main child document
 
              try {
-                 // 1. Check if attendance has already been recorded today
+                 // 1. Check if attendance has already been recorded for this date and type
                  const attendanceSnap = await getDoc(attendanceDocRef);
                  const attendanceData = attendanceSnap.data();
 
                  if (attendanceData && attendanceData[type]) {
                       // Attendance already recorded, show message and exit gracefully
                       if (!isQuickRecord) {
-                           showModal('مسجل مسبقاً', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بالفعل بتاريخ اليوم.`);
+                           showModal('مسجل مسبقاً', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بالفعل بتاريخ ${formatReadableDate(docId)}.`);
                       }
                       return; // EXIT HERE if already recorded
                  }
                  
                  // 2. Prepare data for the attendance record (only if not recorded before)
                  const dataToUpdate = {
-                      date: todayDocId,
+                      date: docId,
                       [`${type}`]: true, // mass: true or meeting: true
                       [`${type}Points`]: points, // Record points earned for this event
                       [`${type}Timestamp`]: Date.now(),
@@ -1961,7 +2014,7 @@
                  });
 
                  if (!isQuickRecord) {
-                      showModal('تسجيل ناجح', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بواسطة الخادم: ${khademName}. (+${points} نقاط)`);
+                      showModal('تسجيل ناجح', `تم تسجيل حضور ${type === 'mass' ? 'القداس' : 'الإجتماع'} بتاريخ ${formatReadableDate(docId)} بواسطة الخادم: ${khademName}. (+${points} نقاط)`);
                  }
              } catch (error) {
                  console.error(`Error recording ${type} attendance:`, error);
@@ -1973,6 +2026,40 @@
                       button.innerHTML = button.originalText;
                  }
              }
+        }
+
+        /**
+         * New function to handle manual attendance button click (for past dates).
+         * @param {string} childId 
+         * @param {string} type - 'mass' or 'meeting'
+         */
+        window.recordManualAttendance = async function(childId, type) {
+            if (!khademName) {
+                return showModal('التحقق مطلوب', 'الرجاء تسجيل الدخول كخادم أولاً لتسجيل الحضور.');
+            }
+
+            const dateInput = document.getElementById('manual-date-input');
+            const dateString = dateInput.value;
+            
+            if (!dateString) {
+                return showModal('خطأ', 'الرجاء اختيار تاريخ أولاً.');
+            }
+
+            const points = type === 'mass' ? getPointsSettings().massPoints : getPointsSettings().meetingPoints;
+            const buttonId = type === 'mass' ? 'manual-mass-btn' : 'manual-meeting-btn';
+            
+            const buttons = document.querySelectorAll('.primary-btn');
+            buttons.forEach(btn => btn.disabled = true); // Disable all buttons temporarily
+
+            try {
+                // Call the main recording function with the specific date
+                await recordAttendance(childId, type, null, points, dateString);
+            } catch (error) {
+                // Error handling done inside recordAttendance
+            } finally {
+                buttons.forEach(btn => btn.disabled = false); // Re-enable all buttons
+                // No need to change button text since this function doesn't use the button element's innerHTML for progress.
+            }
         }
         
         /**
@@ -1997,31 +2084,32 @@
              button.innerText = '...';
 
              try {
-                 await recordAttendance(childId, type, button, points);
-                 
-                 // If successful (and only if not already recorded, handled inside recordAttendance)
-                 // Restore button state after a short delay to show success
-                 button.classList.remove(loadingBg);
-                 button.classList.add('bg-green-600');
-                 button.innerText = '✅ تم!';
-                 setTimeout(() => {
+                  // Call the main recording function using today's date (default)
+                  await recordAttendance(childId, type, button, points);
+                  
+                  // If successful (and only if not already recorded, handled inside recordAttendance)
+                  // Restore button state after a short delay to show success
+                  button.classList.remove(loadingBg);
+                  button.classList.add('bg-green-600');
+                  button.innerText = '✅ تم!';
+                  setTimeout(() => {
                       button.classList.remove('bg-green-600');
                       button.classList.add(originalBg);
                       button.innerText = originalText;
-                 }, 1500);
+                  }, 1500);
 
              } catch (error) {
-                 // Error handling is inside recordAttendance, just restore the button color/text
-                 button.classList.remove(loadingBg);
-                 button.classList.add(originalBg);
-                 button.innerText = originalText;
+                  // Error handling is inside recordAttendance, just restore the button color/text
+                  button.classList.remove(loadingBg);
+                  button.classList.add(originalBg);
+                  button.innerText = originalText;
              } finally {
-                 // Only restore the disabled state if the success delay is not running
-                 // The setTimeout handles reenabling, so no need here unless an early exit happened.
-                 // We trust the original logic to handle duplication.
-                 setTimeout(() => {
-                    button.disabled = false;
-                 }, 2000);
+                  // Only restore the disabled state if the success delay is not running
+                  // The setTimeout handles reenabling, so no need here unless an early exit happened.
+                  // We trust the original logic to handle duplication.
+                  setTimeout(() => {
+                     button.disabled = false;
+                  }, 2000);
              }
         }
 
@@ -2058,22 +2146,22 @@
 
              try {
                   // 1. Record the bonus in the attendance sub-collection
-                 await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
-                 
+                  await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
+                  
                   // 2. Update the total points on the main child document
-                 await updateDoc(childDocRef, {
+                  await updateDoc(childDocRef, {
                       totalPoints: increment(points)
-                 });
-                 
-                 showModal('نجاح البونص', `تم إضافة ${points} نقاط بونص بنجاح للمخدوم.`);
-                 form.reset(); // Clear the form after successful submission
+                  });
+                  
+                  showModal('نجاح البونص', `تم إضافة ${points} نقاط بونص بنجاح للمخدوم.`);
+                  form.reset(); // Clear the form after successful submission
 
              } catch (error) {
-                 console.error("Error adding bonus points:", error);
-                 showModal('خطأ في الإضافة', 'حدث خطأ أثناء إضافة نقاط البونص. الرجاء المحاولة مرة أخرى.');
+                  console.error("Error adding bonus points:", error);
+                  showModal('خطأ في الإضافة', 'حدث خطأ أثناء إضافة نقاط البونص. الرجاء المحاولة مرة أخرى.');
              } finally {
-                 submitButton.disabled = false;
-                 submitButton.innerText = '💰 إضافة البونص';
+                  submitButton.disabled = false;
+                  submitButton.innerText = '💰 إضافة البونص';
              }
         }
         
@@ -2113,29 +2201,29 @@
 
              try {
                   // 1. Record the penalty in the attendance sub-collection
-                 await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
-                 
+                  await setDoc(attendanceDocRef, dataToUpdate, { merge: true });
+                  
                   // 2. Update the total points on the main child document by DECREMENTING
-                 await updateDoc(childDocRef, {
+                  await updateDoc(childDocRef, {
                       totalPoints: increment(-points) // Decrement the total points
-                 });
-                 
-                 showModal('خصم ناجح', `تم خصم ${points} نقاط بنجاح من المخدوم بسبب: ${reason}.`);
-                 form.reset(); // Clear the form after successful submission
+                  });
+                  
+                  showModal('خصم ناجح', `تم خصم ${points} نقاط بنجاح من المخدوم بسبب: ${reason}.`);
+                  form.reset(); // Clear the form after successful submission
 
              } catch (error) {
-                 console.error("Error adding penalty points:", error);
-                 showModal('خطأ في الخصم', 'حدث خطأ أثناء خصم النقاط. الرجاء المحاولة مرة أخرى.');
+                  console.error("Error adding penalty points:", error);
+                  showModal('خطأ في الخصم', 'حدث خطأ أثناء خصم النقاط. الرجاء المحاولة مرة أخرى.');
              } finally {
-                 submitButton.disabled = false;
-                 submitButton.innerText = '❌ خصم النقاط';
+                  submitButton.disabled = false;
+                  submitButton.innerText = '❌ خصم النقاط';
              }
         }
 
 
         /**
          * Handles Khadem editing the profile information.
-         * MODIFIED: To handle photo upload via Storage if a new file is chosen.
+         * MODIFIED: To handle photo upload via Cloudinary.
          * @param {string} childId 
          * @param {HTMLFormElement} form 
          */
@@ -2152,45 +2240,55 @@
              editButton.disabled = true;
              editButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الحفظ...';
 
-             let photoData = document.getElementById('profile-child-photo').src; // Default to existing data/URL
+             // Default to existing photo URL/data if no new file is uploaded
+             let photoData = document.getElementById('profile-child-photo').src; 
 
              try {
                   // Handle new photo upload/change
                   if (editPhotoInput.files.length > 0) {
                       const file = editPhotoInput.files[0];
                       
-                      // Upload new file to Storage (temporarily disabled)
-                      // Fallback: If Storage fails/disabled, we rely on the small file Base64 being available from the input preview (not ideal for large files here).
-                      const uploadResult = await uploadFileToStorage(file, childId);
-
-                      if (uploadResult.url) {
-                          photoData = uploadResult.url; // Use the new Storage URL
+                      if (file.size > MAX_BASE64_SIZE_BYTES && CLOUDINARY_ACTIVE) {
+                           editButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري الرفع السحابي...';
+                           // Large file: Upload to Cloudinary
+                           const uploadUrl = await uploadToCloudinary(file, childId);
+                           if (uploadUrl) {
+                                photoData = uploadUrl; // Use the new Cloudinary URL
+                           } else {
+                               // If Cloudinary failed, keep the old photo data/URL
+                               console.warn("Cloudinary upload failed during edit, keeping old photo data.");
+                           }
+                      } else if (file.size <= MAX_BASE64_SIZE_BYTES) {
+                           editButton.innerHTML = '<div class="animate-spin inline-block w-5 h-5 border-4 border-t-4 border-white border-t-transparent rounded-full mr-2"></div> جاري ضغط الصورة...';
+                           // Small file: Use local compression/Base64
+                           photoData = await compressImage(file, MAX_BASE64_SIZE_BYTES / 1024);
+                      } else {
+                           // Too big and Cloudinary inactive - do nothing to photoData
+                           showModal('تنبيه', 'تم تجاهل الصورة الجديدة. الصورة كبيرة وتحتاج تفعيل Cloudinary.');
                       }
-                      // If upload fails, photoData remains the old data (URL or Base64), preventing accidental removal.
-                      // Since Storage is currently disabled in the function above, uploadResult will be null and photoData remains the original src.
                   }
-                 
+                  
                  const childDocRef = doc(db, getChildrenCollectionPath(), childId);
-                 
-                 await updateDoc(childDocRef, {
+                  
+                  await updateDoc(childDocRef, {
                       name,
                       grade,
                       phone,
                       parentPhone,
                       address,
                       birthdate,
-                      photoBase64: photoData // Will update photo URL/Base64
-                 });
+                      photoBase64: photoData.startsWith('http') || photoData.startsWith('data:image') ? photoData : null // Will update photo URL/Base64
+                  });
 
-                 showModal('نجاح التعديل', `تم تحديث بيانات المخدوم: ${name} بنجاح.`);
-                 navigate('profile', childId); // Reload profile view to show changes
+                  showModal('نجاح التعديل', `تم تحديث بيانات المخدوم: ${name} بنجاح.`);
+                  navigate('profile', childId); // Reload profile view to show changes
 
              } catch (error) {
-                 console.error("Error updating child profile:", error);
-                 showModal('خطأ في التعديل', 'حدث خطأ أثناء حفظ التعديلات. الرجاء المحاولة مرة أخرى.');
+                  console.error("Error updating child profile:", error);
+                  showModal('خطأ في التعديل', 'حدث خطأ أثناء حفظ التعديلات. الرجاء المحاولة مرة أخرى.');
              } finally {
-                 editButton.disabled = false;
-                 editButton.innerText = 'حفظ التعديلات';
+                  editButton.disabled = false;
+                  editButton.innerText = 'حفظ التعديلات';
              }
         }
 
@@ -2231,13 +2329,13 @@
                  // Render the table rows
                  listContainer.innerHTML = allChildren.map((child, index) => {
                       const photoHtml = child.photoBase64 
-                               ? `<img src="${child.photoBase64}" class="w-8 h-8 rounded-full border border-gray-500 object-cover ml-2 inline" alt="صورة">`
-                               : `<div class="w-8 h-8 rounded-full border border-gray-500 bg-gray-600 ml-2 inline-flex items-center justify-center text-sm text-gray-400">👤</div>`;
+                             ? `<img src="${child.photoBase64}" class="w-8 h-8 rounded-full border border-gray-500 object-cover ml-2 inline" alt="صورة">`
+                             : `<div class="w-8 h-8 rounded-full border border-gray-500 bg-gray-600 ml-2 inline-flex items-center justify-center text-sm text-gray-400">👤</div>`;
 
                       const registrationDate = child.createdAt ? formatReadableDate(Date.parse(child.createdAt)) : 'غير متاح';
 
                       return `
-                           <tr class="hover:bg-gray-800 transition duration-100">
+                            <tr class="hover:bg-gray-800 transition duration-100">
                                  <td class="border text-sm font-bold text-gray-400">${index + 1}</td>
                                  <td class="border text-right whitespace-nowrap text-white">
                                      <div class="flex items-center justify-end min-w-[150px]">
@@ -2255,7 +2353,7 @@
                                           ملف المتابعة
                                       </button>
                                  </td>
-                           </tr>
+                            </tr>
                       `;
                  }).join('');
 
@@ -2294,7 +2392,7 @@
                            <p class="font-bold text-blue-300 mb-2">تم العثور على الكود! 🎉</p>
                            <p class="text-gray-200 mb-4">هذا هو الـ QR Code الخاص بك:</p>
                            <div id="found-qr-code-area" class="text-center p-4 border-4 border-gray-600 rounded-lg bg-white">
-                                <!-- QR Code will be generated here -->
+                                 <!-- QR Code will be generated here -->
                            </div>
                            <p class="mt-4 text-sm text-gray-400">احفظ هذا الكود لتسجيل حضورك في المرات القادمة.</p>
                            <!-- Copy Link Button -->
@@ -2389,10 +2487,10 @@
              if (!isFirebaseActive) {
                  container.innerHTML = `
                       <div class="p-6 sm:p-8 rounded-xl card max-w-2xl mx-auto text-center">
-                            <h2 class="text-2xl font-bold mb-4 text-red-400">⚠️ وضع المحاكاة</h2>
-                            <p class="text-gray-300 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض ملف المتابعة أو تسجيل الحضور.</p>
-                            <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لاستخدام وظيفة المتابعة.</p>
-                            <button onclick="navigate('children_list')" class="mt-6 primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">العودة لصفحة الإدارة</button>
+                           <h2 class="text-2xl font-bold mb-4 text-red-400">⚠️ وضع المحاكاة</h2>
+                           <p class="text-gray-300 mb-4">لا يوجد اتصال بقاعدة البيانات (Firebase). لا يمكن عرض ملف المتابعة أو تسجيل الحضور.</p>
+                           <p class="text-sm text-gray-500">الرجاء تشغيل التطبيق في بيئة Canvas لاستخدام وظيفة المتابعة.</p>
+                           <button onclick="navigate('children_list')" class="mt-6 primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">العودة لصفحة الإدارة</button>
                       </div>
                   `;
                   return;
@@ -2406,20 +2504,20 @@
                        <div id="profile-display-mode">
                             <div class="flex items-start justify-between mb-4 border-b pb-4 border-gray-600">
                                  <div class="flex items-center space-x-4 space-x-reverse">
-                                     <!-- Child Photo Placeholder/Container -->
-                                     <img id="profile-child-photo" src="https://placehold.co/60x60/f0f4f8/94a3b8?text=👤" class="w-16 h-16 rounded-full border-4 border-custom-purple object-cover flex-shrink-0" alt="صورة المخدوم">
-                                     <div>
-                                         <h2 class="text-2xl font-bold text-white">ملف متابعة: <span id="child-name-display" class="text-gray-200">جاري التحميل...</span></h2>
-                                         <!-- Display Child ID/Code -->
-                                         <p class="text-xs font-mono text-gray-400 mt-1">الكود: <span id="child-id-code" class="font-semibold text-custom-purple">${childId}</span></p>
-                                         <p class="text-gray-400">الصف/الخدمة: <span id="child-grade-display" class="font-semibold text-white">...</span></p>
-                                         <p class="text-gray-400">تاريخ الميلاد: <span id="child-birthdate-display" class="font-semibold text-white">...</span></p>
-                                         <p class="text-gray-400">رقم الموبايل: <span id="child-phone-display" class="font-semibold text-white">...</span></p>
-                                         <p class="text-gray-400">رقم ولي الأمر: <span id="child-parent-phone-display" class="font-semibold text-white">...</span></p>
-                                         <p class="text-gray-400">العنوان: <span id="child-address-display" class="font-semibold text-white">...</span></p>
-                                         <!-- Total Points Display -->
-                                         <p class="text-lg font-bold mt-2 text-white">إجمالي النقاط: <span id="child-total-points" class="text-green-400 animate-pulse-points">0</span></p>
-                                     </div>
+                                      <!-- Child Photo Placeholder/Container -->
+                                      <img id="profile-child-photo" src="https://placehold.co/60x60/f0f4f8/94a3b8?text=👤" class="w-16 h-16 rounded-full border-4 border-custom-purple object-cover flex-shrink-0" alt="صورة المخدوم">
+                                      <div>
+                                           <h2 class="text-2xl font-bold text-white">ملف متابعة: <span id="child-name-display" class="text-gray-200">جاري التحميل...</span></h2>
+                                           <!-- Display Child ID/Code -->
+                                           <p class="text-xs font-mono text-gray-400 mt-1">الكود: <span id="child-id-code" class="font-semibold text-custom-purple">${childId}</span></p>
+                                           <p class="text-gray-400">الصف/الخدمة: <span id="child-grade-display" class="font-semibold text-white">...</span></p>
+                                           <p class="text-gray-400">تاريخ الميلاد: <span id="child-birthdate-display" class="font-semibold text-white">...</span></p>
+                                           <p class="text-gray-400">رقم الموبايل: <span id="child-phone-display" class="font-semibold text-white">...</span></p>
+                                           <p class="text-gray-400">رقم ولي الأمر: <span id="child-parent-phone-display" class="font-semibold text-white">...</span></p>
+                                           <p class="text-gray-400">العنوان: <span id="child-address-display" class="font-semibold text-white">...</span></p>
+                                           <!-- Total Points Display -->
+                                           <p class="text-lg font-bold mt-2 text-white">إجمالي النقاط: <span id="child-total-points" class="text-green-400 animate-pulse-points">0</span></p>
+                                      </div>
                                  </div>
                                  <!-- Edit Button -->
                                  <button id="toggle-edit-btn" onclick="loadChildDataAndToggleEdit('${childId}')" class="px-4 py-2 text-sm font-medium rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 transition">تعديل بيانات المخدوم</button>
@@ -2457,16 +2555,31 @@
                                    <div class="border p-4 rounded-lg bg-gray-800 border-gray-700">
                                        <label for="edit-photo-file" class="block text-sm font-medium mb-2">تغيير صورة المخدوم (اختياري):</label>
                                        <input type="file" id="edit-photo-file" accept="image/png, image/jpeg" class="w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-custom-purple file:text-white hover:file:bg-purple-700">
+                                       ${CLOUDINARY_ACTIVE ? 
+                                          `<p class="text-xs text-green-400 mt-1">✅ الصور الكبيرة سيتم رفعها تلقائياً على Cloudinary.</p>` :
+                                          `<p class="text-xs text-red-400 mt-1">⚠️ Cloudinary غير مُفعل. الصور الكبيرة لن يتم حفظها.</p>`}
                                    </div>
-                                  <button type="submit" class="w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">حفظ التعديلات</button>
-                                  <button type="button" onclick="toggleEditMode('${childId}', {})" id="cancel-edit-btn" class="w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">إلغاء التعديل</button>
+                                   <button type="submit" class="w-full primary-btn bg-green-500 text-white rounded-lg hover:bg-green-600">حفظ التعديلات</button>
+                                   <button type="button" onclick="toggleEditMode('${childId}', {})" id="cancel-edit-btn" class="w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">إلغاء التعديل</button>
                              </form>
                         </div>
 
+                        <!-- NEW: Manual Attendance Date Picker -->
+                        <h3 class="text-xl font-bold mb-4 border-b pb-2 mt-8 text-white border-gray-600">تسجيل حضور بتاريخ محدد:</h3>
+                        <div class="p-4 rounded-lg border border-gray-700 mb-6 space-y-4" style="background-color: rgba(255, 255, 255, 0.1);">
+                            <div>
+                                <label for="manual-date-input" class="block text-sm font-medium mb-1 text-gray-300">اختر التاريخ:</label>
+                                <input type="date" id="manual-date-input" value="${formatDateToDocId(new Date())}" max="${formatDateToDocId(new Date())}" class="w-full px-4 py-2 border rounded-lg focus:ring-custom-purple focus:border-custom-purple">
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <button onclick="recordManualAttendance('${childId}', 'mass')" class="primary-btn bg-green-600 text-white rounded-lg hover:bg-green-700">✅ تسجيل قداس</button>
+                                <button onclick="recordManualAttendance('${childId}', 'meeting')" class="primary-btn bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">✅ تسجيل اجتماع</button>
+                            </div>
+                        </div>
 
                         <h3 class="text-xl font-bold mb-4 border-b pb-2 border-gray-600 text-white">تسجيل حضور اليوم: ${formatDateToDocId(new Date())}</h3>
                         
-                        <!-- Attendance Status and Record Buttons -->
+                        <!-- Attendance Status and Record Buttons (Today) -->
                         <div id="attendance-status" class="mb-6 p-4 rounded-lg grid grid-cols-2 gap-4 text-center border border-gray-700" style="background-color: rgba(255, 255, 255, 0.1);">
                              <div>
                                  <p class="font-medium text-gray-300">القداس (${pointsSettings.massPoints} نقطة):</p>
@@ -2522,7 +2635,7 @@
                              <p class="text-gray-400">جارِ تحميل السجل...</p>
                         </div>
                    </div>
-               `;
+                 `;
              
              // Start fetching data and listening for changes
              loadChildProfileAndAttendance(childId);
@@ -2537,9 +2650,9 @@
              try {
                  const docSnap = await getDoc(childDocRef);
                  if (docSnap.exists()) {
-                     toggleEditMode(childId, docSnap.data());
+                      toggleEditMode(childId, docSnap.data());
                  } else {
-                     showModal('خطأ', 'لم يتم العثور على ملف الولد لفتح وضع التعديل.');
+                      showModal('خطأ', 'لم يتم العثور على ملف الولد لفتح وضع التعديل.');
                  }
              } catch (error) {
                  console.error("Error fetching child data for edit:", error);
@@ -2556,27 +2669,27 @@
              try {
                  const childSnap = await getDoc(childDocRef);
                  if (childSnap.exists()) {
-                     const data = childSnap.data();
-                     document.getElementById('child-name-display').innerText = data.name;
-                     document.getElementById('child-grade-display').innerText = data.grade;
-                     document.getElementById('child-id-code').innerText = childId; 
-                     document.getElementById('child-total-points').innerText = data.totalPoints || 0; // Display total points
-                     document.getElementById('child-birthdate-display').innerText = data.birthdate || 'غير متاح'; 
-                     document.getElementById('child-phone-display').innerText = data.phone || 'غير متاح'; // NEW
-                     document.getElementById('child-parent-phone-display').innerText = data.parentPhone || 'غير متاح'; // NEW
-                     document.getElementById('child-address-display').innerText = data.address || 'غير متاح'; // NEW
+                      const data = childSnap.data();
+                      document.getElementById('child-name-display').innerText = data.name;
+                      document.getElementById('child-grade-display').innerText = data.grade;
+                      document.getElementById('child-id-code').innerText = childId; 
+                      document.getElementById('child-total-points').innerText = data.totalPoints || 0; // Display total points
+                      document.getElementById('child-birthdate-display').innerText = data.birthdate || 'غير متاح'; 
+                      document.getElementById('child-phone-display').innerText = data.phone || 'غير متاح'; 
+                      document.getElementById('child-parent-phone-display').innerText = data.parentPhone || 'غير متاح'; 
+                      document.getElementById('child-address-display').innerText = data.address || 'غير متاح'; 
 
-                     const photoEl = document.getElementById('profile-child-photo');
-                     if (photoEl && data.photoBase64) {
-                          photoEl.src = data.photoBase64;
-                     } else if (photoEl) {
-                          photoEl.src = "https://placehold.co/60x60/f0f4f8/94a3b8?text=👤";
-                     }
+                      const photoEl = document.getElementById('profile-child-photo');
+                      if (photoEl && data.photoBase64) {
+                           photoEl.src = data.photoBase64;
+                      } else if (photoEl) {
+                           photoEl.src = "https://placehold.co/60x60/f0f4f8/94a3b8?text=👤";
+                      }
 
                  } else {
-                     showModal('خطأ', 'لم يتم العثور على ملف الولد.');
-                     navigate('home'); 
-                     return;
+                      showModal('خطأ', 'لم يتم العثور على ملف الولد.');
+                      navigate('home'); 
+                      return;
                  }
              } catch (error) {
                  console.error("Error loading child profile:", error);
@@ -2670,7 +2783,7 @@
                       const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
 
                       return `
-                           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
                                  <span class="font-bold text-gray-200">${att.id}</span>
                                  <div class="flex flex-col items-end sm:items-center">
                                       ${totalPointsHtml}
@@ -2691,7 +2804,7 @@
                                       ${bonusInfo}
                                       ${penaltyInfo}
                                  </div>
-                           </div>
+                            </div>
                             `;
                  }).join('');
 
@@ -2700,11 +2813,11 @@
                  // For simplicity, we just add the button if we hit the limit.
                  if (snapshot.size === 15) {
                       htmlContent += `
-                            <div class="text-center mt-4">
+                           <div class="text-center mt-4">
                                  <button onclick="loadFullAttendanceHistory('${childId}', this)" class="primary-btn bg-gray-500 text-white rounded-lg hover:bg-gray-600 text-sm">
                                       ⬇️ تحميل السجل بالكامل (قد يستغرق وقتاً)
                                  </button>
-                            </div>
+                           </div>
                       `;
                  }
 
@@ -2758,53 +2871,53 @@
              }
 
              historyContainer.innerHTML = allAttendance.map(att => {
-                   const dailyTotalPoints = (att.massPoints || 0) + (att.meetingPoints || 0) + (att.bonusPoints || 0) - (att.penaltyPoints || 0);
+                      const dailyTotalPoints = (att.massPoints || 0) + (att.meetingPoints || 0) + (att.bonusPoints || 0) - (att.penaltyPoints || 0);
                       
-                   // Display Bonus
-                   const bonusInfo = att.bonusPoints ? 
-                        `<div class="mt-1">
-                              <p class="text-xs text-blue-400">🎁 بونص: +${att.bonusPoints} (${att.bonusReason || 'بدون سبب'})</p>
-                              ${att.bonusKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.bonusKhadem}</p>` : ''}
-                        </div>` : '';
+                      // Display Bonus
+                      const bonusInfo = att.bonusPoints ? 
+                            `<div class="mt-1">
+                                  <p class="text-xs text-blue-400">🎁 بونص: +${att.bonusPoints} (${att.bonusReason || 'بدون سبب'})</p>
+                                  ${att.bonusKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.bonusKhadem}</p>` : ''}
+                            </div>` : '';
 
-                   // NEW: Display Penalty
-                   const penaltyInfo = att.penaltyPoints ? 
-                        `<div class="mt-1">
-                              <p class="text-xs text-penalty">⛔ خصم: -${att.penaltyPoints} (${att.penaltyReason || 'بدون سبب'})</p>
-                              ${att.penaltyKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.penaltyKhadem}</p>` : ''}
-                        </div>` : '';
+                      // NEW: Display Penalty
+                      const penaltyInfo = att.penaltyPoints ? 
+                            `<div class="mt-1">
+                                  <p class="text-xs text-penalty">⛔ خصم: -${att.penaltyPoints} (${att.penaltyReason || 'بدون سبب'})</p>
+                                  ${att.penaltyKhadem ? `<p class="text-xs text-gray-500">بواسطة: ${att.penaltyKhadem}</p>` : ''}
+                            </div>` : '';
 
-                   const totalPointsHtml = dailyTotalPoints > 0 ? 
-                        `<span class="text-lg font-bold text-green-400 mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span>` : 
-                        `<span class="text-lg font-bold text-penalty mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span></span>`;
-                   
-                   const massKhademDisplay = att.massKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.massKhadem}</p>` : '';
-                   const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
+                      const totalPointsHtml = dailyTotalPoints > 0 ? 
+                            `<span class="text-lg font-bold text-green-400 mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span>` : 
+                            `<span class="text-lg font-bold text-penalty mr-4">إجمالي اليوم: ${dailyTotalPoints} نقاط</span></span>`;
+                      
+                      const massKhademDisplay = att.massKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.massKhadem}</p>` : '';
+                      const meetingKhademDisplay = att.meetingKhadem ? `<p class="text-xs text-gray-500">الخادم: ${att.meetingKhadem}</p>` : '';
 
-                   return `
-                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
-                              <span class="font-bold text-gray-200">${att.id}</span>
-                              <div class="flex flex-col items-end sm:items-center">
-                                   ${totalPointsHtml}
-                                   <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
-                                        <div class="flex flex-col items-end">
-                                             <span class="text-sm font-medium ${att.mass ? 'text-green-500' : 'text-red-400'}">
-                                                  القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
-                                             </span>
-                                             ${massKhademDisplay}
-                                        </div>
-                                        <div class="flex flex-col items-end">
-                                             <span class="text-sm font-medium ${att.meeting ? 'text-green-500' : 'text-red-400'}">
-                                                  الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
-                                             </span>
-                                             ${meetingKhademDisplay}
-                                        </div>
-                                   </div>
-                                   ${bonusInfo}
-                                   ${penaltyInfo}
-                              </div>
-                        </div>
-                        `;
+                      return `
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 rounded-lg ${att.id === todayDocId ? 'bg-yellow-900 border-l-4 border-yellow-500' : 'bg-gray-800'}">
+                                 <span class="font-bold text-gray-200">${att.id}</span>
+                                 <div class="flex flex-col items-end sm:items-center">
+                                      ${totalPointsHtml}
+                                      <div class="flex space-x-3 space-x-reverse flex-wrap items-center mt-1 sm:mt-0">
+                                           <div class="flex flex-col items-end">
+                                                <span class="text-sm font-medium ${att.mass ? 'text-green-500' : 'text-red-400'}">
+                                                     القداس: ${att.mass ? 'حضر' : 'غائب'} (+${att.massPoints || 0})
+                                                </span>
+                                                ${massKhademDisplay}
+                                           </div>
+                                           <div class="flex flex-col items-end">
+                                                <span class="text-sm font-medium ${att.meeting ? 'text-green-500' : 'text-red-400'}">
+                                                     الإجتماع: ${att.meeting ? 'حضر' : 'غائب'} (+${att.meetingPoints || 0})
+                                                </span>
+                                                ${meetingKhademDisplay}
+                                           </div>
+                                      </div>
+                                      ${bonusInfo}
+                                      ${penaltyInfo}
+                                 </div>
+                            </div>
+                            `;
              }).join('');
         }
 
@@ -2837,7 +2950,7 @@
              e.preventDefault();
              const id = document.getElementById('history-id-input').value.trim();
               if (!isFirebaseActive) {
-                 showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
+                  showModal('⚠️ وضع المحاكاة', 'لا يمكن جلب البيانات! يجب تشغيل التطبيق في بيئة Canvas.', `
                        <p class="text-xs text-red-500 mb-3">
                             للتجربة: يمكنك استخدام أي كود، ولكن لن يتم عرض ملف الولد.
                        </p>
@@ -2892,15 +3005,15 @@
                                 <!-- Total Points Display for Makhdoum -->
                                 <p class="text-lg font-bold mt-2 text-white">إجمالي النقاط: <span id="child-history-total-points" class="text-green-400 animate-pulse-points">0</span></p>
                            </div>
-                      </div>
+                       </div>
 
-                           <h3 class="text-xl font-bold mb-4 text-white">تفاصيل الحضور</h3>
-                           <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto p-2 border border-gray-700 rounded-lg" style="background-color: rgba(0, 0, 0, 0.3);">
+                            <h3 class="text-xl font-bold mb-4 text-white">تفاصيل الحضور</h3>
+                            <div id="child-attendance-list" class="space-y-3 max-h-[70vh] overflow-y-auto p-2 border border-gray-700 rounded-lg" style="background-color: rgba(0, 0, 0, 0.3);">
                                  <p class="text-gray-400">جارِ تحميل السجل...</p>
-                           </div>
-                           <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">🔍 بحث عن كود آخر</button>
-                    </div>
-              `;
+                            </div>
+                            <button onclick="navigate('history_search')" class="mt-6 w-full primary-btn bg-gray-700 text-white rounded-lg hover:bg-gray-600">🔍 بحث عن كود آخر</button>
+                      </div>
+                  `;
              
              // Load and listen for data
              loadChildHistory(childId);
@@ -2914,21 +3027,21 @@
              try {
                  const childSnap = await getDoc(childDocRef);
                  if (childSnap.exists()) {
-                     const data = childSnap.data();
-                     document.getElementById('child-history-name').innerText = data.name;
-                     document.getElementById('child-history-id-code').innerText = childId;
-                     document.getElementById('child-history-total-points').innerText = data.totalPoints || 0; // Display total points
-                     
-                     const photoEl = document.getElementById('history-child-photo');
-                     if (photoEl && data.photoBase64) {
-                          photoEl.src = data.photoBase64;
-                     } else if (photoEl) {
-                          photoEl.src = "https://placehold.co/60x60/f0f4f8/94a3b8?text=👤";
-                     }
+                      const data = childSnap.data();
+                      document.getElementById('child-history-name').innerText = data.name;
+                      document.getElementById('child-history-id-code').innerText = childId;
+                      document.getElementById('child-history-total-points').innerText = data.totalPoints || 0; // Display total points
+                      
+                      const photoEl = document.getElementById('history-child-photo');
+                      if (photoEl && data.photoBase64) {
+                           photoEl.src = data.photoBase64;
+                      } else if (photoEl) {
+                           photoEl.src = "https://placehold.co/60x60/f0f4f8/94a3b8?text=👤";
+                      }
 
                  } else {
-                     document.getElementById('child-history-name').innerText = 'غير موجود';
-                     return;
+                      document.getElementById('child-history-name').innerText = 'غير موجود';
+                      return;
                  }
              } catch (error) {
                  console.error("Error loading child profile:", error);
@@ -2957,7 +3070,7 @@
 
                  const allAttendance = [];
                  snapshot.forEach(doc => {
-                     allAttendance.push({ id: doc.id, ...doc.data() });
+                      allAttendance.push({ id: doc.id, ...doc.data() });
                  });
 
                  // Render History (Sort by date descending)
@@ -3000,11 +3113,11 @@
 
 
                       return `
-                           <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl border-r-4 border-indigo-400" style="background-color: rgba(67, 56, 202, 0.1);">
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 rounded-xl border-r-4 border-indigo-400" style="background-color: rgba(67, 56, 202, 0.1);">
                                  <!-- Date and Total Points -->
                                  <div class="mb-2 sm:mb-0">
-                                     <span class="font-bold text-lg text-white">${att.id}</span>
-                                     ${totalPointsHtml}
+                                      <span class="font-bold text-lg text-white">${att.id}</span>
+                                      ${totalPointsHtml}
                                  </div>
                                  <div class="flex flex-wrap gap-4 items-center">
                                       <!-- Mass Status and Points -->
@@ -3021,11 +3134,11 @@
                                            </span>
                                            ${meetingKhademDisplay}
                                       </div>
-                                       ${bonusDisplay}
-                                       ${penaltyDisplay} <!-- NEW: Show Penalty info -->
+                                      ${bonusDisplay}
+                                      ${penaltyDisplay} <!-- NEW: Show Penalty info -->
                                  </div>
-                           </div>
-                           `}).join('');
+                            </div>
+                            `}).join('');
 
              }, (error) => {
                  console.error("Error setting up history snapshot listener:", error);
